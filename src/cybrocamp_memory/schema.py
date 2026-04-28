@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Iterable
+
+
+class AuthorityClass(StrEnum):
+    USER_DIRECT = "user_direct"
+    CANONICAL_VAULT = "canonical_vault"
+    CANONICAL_MEMPALACE = "canonical_mempalace"
+    LOCAL_MEMPALACE = "local_mempalace"
+    A2A_PEER_CLAIM = "a2a_peer_claim"
+    CRON_RESULT = "cron_result"
+    DERIVED_SUMMARY = "derived_summary"
+    EXTERNAL_SOURCE = "external_source"
+    PAYLOAD_UNTRUSTED = "payload_untrusted"
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceSpan:
+    source_uri: str
+    start: int
+    end: int
+    content_hash: str
+
+    def __post_init__(self) -> None:
+        if not self.source_uri:
+            raise ValueError("evidence span requires source_uri")
+        if self.start < 0 or self.end < self.start:
+            raise ValueError("evidence span requires 0 <= start <= end")
+        if not self.content_hash:
+            raise ValueError("evidence span requires content_hash")
+
+
+@dataclass(frozen=True, slots=True)
+class RecallItem:
+    text: str
+    authority: AuthorityClass
+    evidence: EvidenceSpan
+    timestamp: str
+    claims_user_approval: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("recall item requires text")
+        if not self.timestamp:
+            raise ValueError("recall item requires timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class RecallPacket:
+    query: str
+    items: list[RecallItem]
+    policy_warnings: list[str] = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.query:
+            raise ValueError("recall packet requires query")
+        object.__setattr__(self, "policy_warnings", _policy_warnings(self.items))
+
+
+def _policy_warnings(items: Iterable[RecallItem]) -> list[str]:
+    warnings: list[str] = []
+    for item in items:
+        if item.claims_user_approval and item.authority is not AuthorityClass.USER_DIRECT:
+            if "non_user_direct_approval_claim" not in warnings:
+                warnings.append("non_user_direct_approval_claim")
+    return warnings
