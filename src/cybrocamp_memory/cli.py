@@ -14,6 +14,7 @@ from .graph_index import (
     term_graph_from_obsidian,
     write_term_graph_jsonl,
 )
+from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .retrieval import recall_query
 from .search_index import (
@@ -82,6 +83,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     recall_graph_parser.add_argument("--timestamp", default=None)
     recall_graph_parser.add_argument("--top-k", type=int, default=5)
     recall_graph_parser.add_argument("--max-depth", type=int, default=2)
+
+    hippo_query_parser = subparsers.add_parser("hippo-query")
+    hippo_query_parser.add_argument("--index", required=True)
+    hippo_query_parser.add_argument("--graph", required=True)
+    hippo_query_parser.add_argument("--query", required=True)
+    hippo_query_parser.add_argument("--output", required=True)
+    hippo_query_parser.add_argument("--timestamp", default=None)
+    hippo_query_parser.add_argument("--top-k", type=int, default=8)
+    hippo_query_parser.add_argument("--no-graph", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -164,6 +174,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(_packet_to_json_dict(packet), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
         print(f"wrote graph recall packet with {len(packet.items)} items to {args.output}")
+        return 0
+    if args.command == "hippo-query":
+        timestamp = args.timestamp or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        records = load_search_terms_jsonl(Path(args.index))
+        graph = load_term_graph_jsonl(Path(args.graph))
+        packet = hybrid_recall(
+            records,
+            graph,
+            args.query,
+            timestamp=timestamp,
+            top_k=args.top_k,
+            include_graph=not args.no_graph,
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(_packet_to_json_dict(packet), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        print(f"wrote hippo recall packet with {len(packet.items)} items to {args.output}")
         return 0
     parser.error("unsupported command")
     return 2
