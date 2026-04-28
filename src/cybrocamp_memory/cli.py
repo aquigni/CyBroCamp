@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Sequence
 
 from .chunks import chunk_records_from_obsidian, load_chunk_manifest_jsonl, write_chunk_manifest_jsonl
+from .graph_index import (
+    load_term_graph_jsonl,
+    recall_from_term_graph,
+    term_graph_from_obsidian,
+    write_term_graph_jsonl,
+)
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .retrieval import recall_query
 from .search_index import (
@@ -59,6 +65,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     recall_index_parser.add_argument("--output", required=True)
     recall_index_parser.add_argument("--timestamp", default=None)
     recall_index_parser.add_argument("--top-k", type=int, default=5)
+
+    graph_index_parser = subparsers.add_parser("graph-index")
+    graph_index_subparsers = graph_index_parser.add_subparsers(dest="source", required=True)
+    graph_index_obsidian_parser = graph_index_subparsers.add_parser("obsidian")
+    graph_index_obsidian_parser.add_argument("--vault", required=True)
+    graph_index_obsidian_parser.add_argument("--output", required=True)
+    graph_index_obsidian_parser.add_argument("--epoch", default="obsidian-scan-v1")
+    graph_index_obsidian_parser.add_argument("--max-chars", type=int, default=1200)
+    graph_index_obsidian_parser.add_argument("--max-terms-per-record", type=int, default=24)
+
+    recall_graph_parser = subparsers.add_parser("recall-graph")
+    recall_graph_parser.add_argument("--graph", required=True)
+    recall_graph_parser.add_argument("--query", required=True)
+    recall_graph_parser.add_argument("--output", required=True)
+    recall_graph_parser.add_argument("--timestamp", default=None)
+    recall_graph_parser.add_argument("--top-k", type=int, default=5)
+    recall_graph_parser.add_argument("--max-depth", type=int, default=2)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -114,6 +137,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(_packet_to_json_dict(packet), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
         print(f"wrote indexed recall packet with {len(packet.items)} items to {args.output}")
+        return 0
+    if args.command == "graph-index" and args.source == "obsidian":
+        created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        graph = term_graph_from_obsidian(
+            Path(args.vault),
+            max_chars=args.max_chars,
+            max_terms_per_record=args.max_terms_per_record,
+            epoch=args.epoch,
+            created_at=created_at,
+        )
+        write_term_graph_jsonl(Path(args.output), graph.edges)
+        print(f"wrote {len(graph.edges)} term graph edges to {args.output}")
+        return 0
+    if args.command == "recall-graph":
+        timestamp = args.timestamp or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        graph = load_term_graph_jsonl(Path(args.graph))
+        packet = recall_from_term_graph(
+            graph,
+            args.query,
+            timestamp=timestamp,
+            top_k=args.top_k,
+            max_depth=args.max_depth,
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(_packet_to_json_dict(packet), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        print(f"wrote graph recall packet with {len(packet.items)} items to {args.output}")
         return 0
     parser.error("unsupported command")
     return 2

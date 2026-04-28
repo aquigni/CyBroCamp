@@ -24,6 +24,12 @@ _DROP_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"),
 )
 
+_STOP_TERMS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "in", "into", "is", "it",
+    "not", "of", "on", "or", "raw", "that", "the", "this", "to", "with", "without",
+    "без", "в", "во", "для", "до", "и", "или", "из", "к", "как", "на", "не", "но", "о", "об", "от", "по", "с", "у", "что",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SearchTermRecord:
@@ -87,6 +93,10 @@ def build_search_terms(text: str) -> list[str]:
     for raw in re.findall(r"https?://\S+|[\w@./:+%-]+", text, flags=re.UNICODE):
         token = raw.strip("`'\"()[]{}<>,.;!?“”‘’").lower()
         if not token or len(token) < 2 or len(token) > 32:
+            continue
+        if token in _STOP_TERMS:
+            continue
+        if not re.search(r"[\wА-Яа-яёЁ]", token, flags=re.UNICODE):
             continue
         if any(pattern.match(token) for pattern in _DROP_PATTERNS):
             continue
