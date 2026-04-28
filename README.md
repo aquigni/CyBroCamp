@@ -23,4 +23,14 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli manifest obsidian \
   --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD)
 ```
 
-The generated JSONL manifest is a derived local artifact and is intentionally ignored by git. It contains stable source IDs, content hashes, authority class, epoch, timestamp, and source URIs — not note contents.
+The generated JSONL manifests are derived local artifacts and are intentionally ignored by git. Source manifests contain stable source IDs, content hashes, authority class, epoch, timestamp, and source URIs — not note contents. Chunk manifests contain chunk metadata and redacted previews; raw chunk text is not serialized to JSONL.
+
+Chunk manifest generation:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli chunks obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-chunks.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --max-chars 1200
+```

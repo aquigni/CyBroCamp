@@ -23,6 +23,11 @@ class EvidenceSpan:
     start: int
     end: int
     content_hash: str
+    source_id: str | None = None
+    chunk_id: str | None = None
+    authority: AuthorityClass | None = None
+    quarantine_flags: list[str] = field(default_factory=list)
+    source_content_hash: str | None = None
 
     def __post_init__(self) -> None:
         if not self.source_uri:
@@ -66,4 +71,7 @@ def _policy_warnings(items: Iterable[RecallItem]) -> list[str]:
         if item.claims_user_approval and item.authority is not AuthorityClass.USER_DIRECT:
             if "non_user_direct_approval_claim" not in warnings:
                 warnings.append("non_user_direct_approval_claim")
+        if item.evidence.quarantine_flags:
+            if "quarantined_evidence" not in warnings:
+                warnings.append("quarantined_evidence")
     return warnings
