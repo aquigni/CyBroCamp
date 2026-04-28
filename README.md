@@ -46,3 +46,25 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall \
 ```
 
 Recall uses non-quarantined chunk previews/metadata only. It returns `RecallPacket` evidence fields, not authoritative answers.
+
+Sanitized search-term index generation for deeper retrieval without serialized raw text:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli search-index obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-search-terms.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --max-chars 1200
+```
+
+Recall from the sanitized index:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall-index \
+  --index data/obsidian-search-terms.jsonl \
+  --query "survival economics financial substrate CyBroSwarm" \
+  --output data/recall-index-survival-economics.json \
+  --top-k 5
+```
+
+Search-term indexes serialize sanitized tokens and evidence metadata. They do not serialize raw chunk body or previews.
