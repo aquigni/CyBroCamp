@@ -34,3 +34,15 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli chunks obsidian \
   --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
   --max-chars 1200
 ```
+
+Recall packet generation from the local chunk manifest:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall \
+  --chunks data/obsidian-chunks.jsonl \
+  --query "CyBroCamp memory sidecar Stage 2 chunk evidence" \
+  --output data/recall-cybrocamp-stage2.json \
+  --top-k 5
+```
+
+Recall uses non-quarantined chunk previews/metadata only. It returns `RecallPacket` evidence fields, not authoritative answers.

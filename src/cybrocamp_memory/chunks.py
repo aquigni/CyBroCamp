@@ -78,6 +78,24 @@ class ChunkRecord:
         data.pop("text", None)
         return data
 
+    @classmethod
+    def from_json_dict(cls, data: dict[str, object]) -> "ChunkRecord":
+        return cls(
+            source_id=str(data["source_id"]),
+            source_uri=str(data["source_uri"]),
+            chunk_id=str(data["chunk_id"]),
+            chunk_index=int(data["chunk_index"]),
+            content_hash=str(data["content_hash"]),
+            source_content_hash=str(data["source_content_hash"]),
+            span_start=int(data["span_start"]),
+            span_end=int(data["span_end"]),
+            text=str(data.get("text", data.get("text_preview", ""))),
+            text_preview=str(data["text_preview"]),
+            authority=AuthorityClass(str(data["authority"])),
+            quarantine_flags=[str(flag) for flag in data.get("quarantine_flags", [])],
+            schema_version=str(data.get("schema_version", CHUNK_SCHEMA_VERSION)),
+        )
+
     def to_evidence_span(self) -> EvidenceSpan:
         return EvidenceSpan(
             source_uri=self.source_uri,
@@ -89,6 +107,7 @@ class ChunkRecord:
             authority=self.authority,
             quarantine_flags=list(self.quarantine_flags),
             source_content_hash=self.source_content_hash,
+            stale_flags=[],
         )
 
 
@@ -152,6 +171,20 @@ def write_chunk_manifest_jsonl(path: str | Path, records: Iterable[ChunkRecord])
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
+
+
+def load_chunk_manifest_jsonl(path: str | Path) -> list[ChunkRecord]:
+    records: list[ChunkRecord] = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            try:
+                records.append(ChunkRecord.from_json_dict(data))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid chunk manifest line {line_number}") from exc
+    return records
 
 
 def chunks_to_recall_items(chunks: Sequence[ChunkRecord], *, timestamp: str) -> list[RecallItem]:
