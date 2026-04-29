@@ -7,3 +7,6 @@ dist/
 build/
 data/**/*.jsonl
 data/**/*.json
+data/**/*.sh
+data/**/*.service
+data/**/*.timer

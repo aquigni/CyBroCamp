@@ -41,6 +41,7 @@ The current prototype includes:
 15. **Stage 16 locked preview** — a second locked, human-readable preview harness over Stage 15 plans, still non-writing.
 16. **Stage 17 controlled execution receipt** — double-approved local receipts for reviewed operations; no canonical network writes are performed.
 17. **Stage 18 cortex rollout** — three-sister rollout and future-sister auto-enrollment policy with least-privilege rights.
+18. **Operational persistence bundle** — user-systemd timer plus safe rebuild runner for persistent derived cortex artifacts outside `/opt/obs/vault`.
 
 ## Installation
 
@@ -61,7 +62,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Current local gate at publication time:
 
 ```text
-113 passed
+119 passed
 ```
 
 ## Usage
@@ -299,6 +300,28 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli cortex-rollout \
 ```
 
 Future sisters auto-enter as `quarantined_readonly_until_explicit_approval`. They may query bounded recall surfaces but cannot build canonical indexes, preview/execute promotions, write canonical MemPalace, mutate services, or grant H0st approval.
+
+### Operational persistence bundle
+
+The persistence bundle writes installable user-systemd units for periodic derived cortex rebuilds. It remains a sidecar: artifacts are written under a non-vault artifact root, the runner calls only local CLI commands, and the generated safety envelope keeps `canonical_writes=false`, `network_calls=false`, `approval_state_writes=false`, and `writes_inside_vault=false`.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli persistence-bundle \
+  --repo-root /home/chthonya/projects/cybrocamp-memory \
+  --vault /opt/obs/vault \
+  --artifact-root /home/chthonya/.local/share/cybrocamp/cortex \
+  --output-dir data/persistence-bundle \
+  --interval-minutes 30
+```
+
+Generated files:
+
+- `cybrocamp-cortex-rebuild.sh`
+- `cybrocamp-cortex-rebuild.service`
+- `cybrocamp-cortex-rebuild.timer`
+- `persistence-bundle.json`
+
+The intended installation target is the user systemd layer: `~/.local/bin/` plus `~/.config/systemd/user/`. The timer uses `Persistent=true`, `OnBootSec=2min`, and `OnUnitActiveSec=<N>min`.
 
 ## Authority model
 

@@ -19,6 +19,7 @@ from .graph_index import (
 from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
+from .operational_persistence import build_persistence_bundle, write_persistence_bundle
 from .promotion_audit import audit_promotion_candidates, write_promotion_audit_json
 from .promotion_execution import build_execution_receipt, write_execution_receipt_json
 from .promotion_plan import build_promotion_plan, write_promotion_plan_json
@@ -157,6 +158,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     cortex_rollout_parser = subparsers.add_parser("cortex-rollout")
     cortex_rollout_parser.add_argument("--output", required=True)
     cortex_rollout_parser.add_argument("--timestamp", required=True)
+
+    persistence_parser = subparsers.add_parser("persistence-bundle")
+    persistence_parser.add_argument("--repo-root", required=True)
+    persistence_parser.add_argument("--vault", required=True)
+    persistence_parser.add_argument("--artifact-root", required=True)
+    persistence_parser.add_argument("--output-dir", required=True)
+    persistence_parser.add_argument("--interval-minutes", type=int, default=30)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -350,6 +358,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         rollout = build_cortex_rollout(timestamp=args.timestamp)
         write_cortex_rollout_json(Path(args.output), rollout)
         print(f"wrote cortex rollout plan for {len(rollout.sisters)} sisters to {args.output}")
+        return 0
+    if args.command == "persistence-bundle":
+        bundle = build_persistence_bundle(
+            repo_root=Path(args.repo_root),
+            vault_root=Path(args.vault),
+            artifact_root=Path(args.artifact_root),
+            interval_minutes=args.interval_minutes,
+        )
+        written = write_persistence_bundle(Path(args.output_dir), bundle)
+        print(f"wrote CyBroCamp persistence bundle to {Path(args.output_dir)} ({len(written)} files)")
         return 0
     parser.error("unsupported command")
     return 2

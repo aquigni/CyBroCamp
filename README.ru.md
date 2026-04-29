@@ -39,6 +39,7 @@ Sidecar сам не должен становиться canonical authority surf
 15. **Stage 16 locked preview** — второй locked review harness поверх Stage 15 plans, всё ещё без canonical writes.
 16. **Stage 17 controlled execution receipt** — double-approved local receipts для reviewed operations; canonical network writes не выполняются.
 17. **Stage 18 cortex rollout** — rollout трёх сестёр и auto-enrollment policy для будущих сестёр с least-privilege rights.
+18. **Operational persistence bundle** — user-systemd timer и безопасный rebuild runner для постоянных derived cortex artifacts вне `/opt/obs/vault`.
 
 ## Установка
 
@@ -59,7 +60,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Локальный gate на момент публикации:
 
 ```text
-113 passed
+119 passed
 ```
 
 ## Использование
@@ -297,6 +298,28 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli cortex-rollout \
 ```
 
 Будущие сёстры автоматически входят как `quarantined_readonly_until_explicit_approval`. Они могут делать bounded recall queries, но не могут строить canonical indexes, preview/execute promotions, писать canonical MemPalace, мутировать services или выдавать H0st approval.
+
+### Operational persistence bundle
+
+Persistence bundle создаёт installable user-systemd units для периодического rebuild derived cortex artifacts. Это всё ещё sidecar: артефакты пишутся под non-vault artifact root, runner вызывает только локальные CLI-команды, а generated safety envelope фиксирует `canonical_writes=false`, `network_calls=false`, `approval_state_writes=false` и `writes_inside_vault=false`.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli persistence-bundle \
+  --repo-root /home/chthonya/projects/cybrocamp-memory \
+  --vault /opt/obs/vault \
+  --artifact-root /home/chthonya/.local/share/cybrocamp/cortex \
+  --output-dir data/persistence-bundle \
+  --interval-minutes 30
+```
+
+Generated files:
+
+- `cybrocamp-cortex-rebuild.sh`
+- `cybrocamp-cortex-rebuild.service`
+- `cybrocamp-cortex-rebuild.timer`
+- `persistence-bundle.json`
+
+Целевой installation layer — user systemd: `~/.local/bin/` и `~/.config/systemd/user/`. Timer использует `Persistent=true`, `OnBootSec=2min` и `OnUnitActiveSec=<N>min`.
 
 ## Authority model
 
