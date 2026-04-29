@@ -14,10 +14,12 @@ import pytest
 
 from cybrocamp_memory.cli import main
 from cybrocamp_memory.local_api import (
+    authorize_bearer_request,
     build_api_bundle,
     build_api_status,
     build_query_response,
     load_auth_token,
+    load_token_registry,
     require_bearer_auth,
     run_local_api,
     validate_query_payload,
@@ -216,6 +218,55 @@ def test_bearer_auth_helpers_are_fail_closed_and_non_leaky(tmp_path):
         load_auth_token(tmp_path / "missing")
 
 
+def test_token_registry_authorizes_per_sister_roles_without_serializing_values(tmp_path):
+    registry_file = tmp_path / "cortex-api-tokens.json"
+    registry_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "cybrocamp.local_api.token_registry.v1",
+                "tokens": {
+                    "mac0sh": {
+                        "token_hash": "sha256:b7c9725f3cbd5b8cca2f0789515af29d4d5f96136c959b5a8e0bb17ef62fc9c1",
+                        "role": "reader",
+                        "allowed_endpoints": ["GET /status", "POST /query"],
+                        "max_top_k": 3,
+                        "enabled": True,
+                    },
+                    "debi0": {
+                        "token_hash": "sha256:692eae3655194c82d9cd9c458900ec43d2b86451c80c6230635eeb1efd4446f1",
+                        "role": "tiny_smoke",
+                        "allowed_endpoints": ["GET /status"],
+                        "max_top_k": 1,
+                        "enabled": True,
+                    },
+                    "disabled": {
+                        "token_hash": "sha256:" + "a" * 64,
+                        "role": "reader",
+                        "allowed_endpoints": ["GET /status"],
+                        "enabled": False,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = load_token_registry(registry_file)
+    raw = json.dumps(registry.to_safe_json(), sort_keys=True)
+
+    assert "mac0sh-reader-token" not in raw
+    assert authorize_bearer_request("Bearer mac0sh-reader-token", registry, endpoint="GET /status").allowed is True
+    assert authorize_bearer_request("Bearer mac0sh-reader-token", registry, endpoint="POST /query", requested_top_k=3).allowed is True
+    too_large = authorize_bearer_request("Bearer mac0sh-reader-token", registry, endpoint="POST /query", requested_top_k=4)
+    assert too_large.allowed is False
+    assert too_large.reason == "top_k_exceeds_token_limit"
+    denied_endpoint = authorize_bearer_request("Bearer debi0-smoke-token", registry, endpoint="POST /query", requested_top_k=1)
+    assert denied_endpoint.allowed is False
+    assert denied_endpoint.reason == "endpoint_not_allowed"
+    assert authorize_bearer_request("Bearer wrong", registry, endpoint="GET /status").allowed is False
+    assert authorize_bearer_request(None, registry, endpoint="GET /status").allowed is False
+
+
 def test_api_bundle_can_reference_external_auth_token_file_without_serializing_token(tmp_path):
     artifact_dir = _runtime_artifact_dir(tmp_path)
     token_file = tmp_path / "cybrocamp-token"
@@ -231,6 +282,40 @@ def test_api_bundle_can_reference_external_auth_token_file_without_serializing_t
     assert "sister-token-value" not in raw
     assert "CYBROCAMP_LOCAL_API_TOKEN_FILE" in bundle["systemd_service"]
     assert bundle["safety_envelope"]["bearer_auth_supported"] is True
+    assert bundle["safety_envelope"]["token_serialized"] is False
+
+
+def test_api_bundle_can_reference_external_token_registry_without_serializing_tokens(tmp_path):
+    artifact_dir = _runtime_artifact_dir(tmp_path)
+    registry_file = tmp_path / "cortex-api-tokens.json"
+    registry_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "cybrocamp.local_api.token_registry.v1",
+                "tokens": {
+                    "mac0sh": {
+                        "token_hash": "sha256:b7c9725f3cbd5b8cca2f0789515af29d4d5f96136c959b5a8e0bb17ef62fc9c1",
+                        "role": "reader",
+                        "allowed_endpoints": ["GET /status", "POST /query"],
+                        "max_top_k": 5,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = build_api_bundle(
+        repo_root=tmp_path / "repo",
+        artifact_dir=artifact_dir,
+        auth_token_registry=registry_file,
+    )
+    raw = json.dumps(bundle, ensure_ascii=False, sort_keys=True)
+
+    assert "mac0sh-reader-token" not in raw
+    assert "CYBROCAMP_LOCAL_API_TOKEN_REGISTRY" in bundle["systemd_service"]
+    assert bundle["safety_envelope"]["bearer_auth_required"] is True
+    assert bundle["safety_envelope"]["per_sister_bearer_auth_supported"] is True
     assert bundle["safety_envelope"]["token_serialized"] is False
 
 
@@ -254,6 +339,89 @@ def test_live_local_api_enforces_bearer_auth_when_configured(tmp_path):
         _stop_process(proc)
 
 
+def test_live_local_api_enforces_per_sister_registry_roles_and_limits(tmp_path):
+    artifact_dir = _runtime_artifact_dir(tmp_path)
+    registry_file = tmp_path / "cortex-api-tokens.json"
+    registry_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "cybrocamp.local_api.token_registry.v1",
+                "tokens": {
+                    "mac0sh": {
+                        "token_hash": "sha256:b7c9725f3cbd5b8cca2f0789515af29d4d5f96136c959b5a8e0bb17ef62fc9c1",
+                        "role": "reader",
+                        "allowed_endpoints": ["GET /status", "POST /query"],
+                        "max_top_k": 2,
+                        "enabled": True,
+                    },
+                    "debi0": {
+                        "token_hash": "sha256:692eae3655194c82d9cd9c458900ec43d2b86451c80c6230635eeb1efd4446f1",
+                        "role": "tiny_smoke",
+                        "allowed_endpoints": ["GET /status"],
+                        "max_top_k": 1,
+                        "enabled": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    port = _free_port()
+    proc = _start_local_api_process(artifact_dir=artifact_dir, port=port, auth_token_registry=registry_file)
+    try:
+        assert _status_code(f"http://127.0.0.1:{port}/status") == 401
+        assert _status_code(f"http://127.0.0.1:{port}/status", auth_header_value="mac0sh-reader-token") == 200
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            auth_header_value="mac0sh-reader-token",
+            body=json.dumps({"query": "stage13 hermes adapter eval", "top_k": 2}).encode("utf-8"),
+        ) == 200
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            auth_header_value="mac0sh-reader-token",
+            body=json.dumps({"query": "stage13 hermes adapter eval", "top_k": 3}).encode("utf-8"),
+        ) == 403
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            auth_header_value="debi0-smoke-token",
+            body=json.dumps({"query": "stage13 hermes adapter eval", "top_k": 1}).encode("utf-8"),
+        ) == 403
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            body=b"{not-json",
+        ) == 401
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            auth_header_value="wrong",
+            body=b"{not-json",
+        ) == 401
+    finally:
+        _stop_process(proc)
+
+
+def test_token_registry_rejects_non_hex_hashes(tmp_path):
+    registry_file = tmp_path / "cortex-api-tokens.json"
+    registry_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "cybrocamp.local_api.token_registry.v1",
+                "tokens": {
+                    "bad": {
+                        "token_hash": "sha256:" + "z" * 64,
+                        "role": "reader",
+                        "allowed_endpoints": ["GET /status"],
+                        "max_top_k": 1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="64 hex"):
+        load_token_registry(registry_file)
+
+
 def test_live_local_api_preserves_unauthenticated_local_mode(tmp_path):
     artifact_dir = _runtime_artifact_dir(tmp_path)
     port = _free_port()
@@ -270,7 +438,13 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _start_local_api_process(*, artifact_dir: Path, port: int, auth_token_file: Path | None = None) -> subprocess.Popen[str]:
+def _start_local_api_process(
+    *,
+    artifact_dir: Path,
+    port: int,
+    auth_token_file: Path | None = None,
+    auth_token_registry: Path | None = None,
+) -> subprocess.Popen[str]:
     command = [
         sys.executable,
         "-m",
@@ -285,6 +459,8 @@ def _start_local_api_process(*, artifact_dir: Path, port: int, auth_token_file: 
     ]
     if auth_token_file is not None:
         command.extend(["--auth-token-file", str(auth_token_file)])
+    if auth_token_registry is not None:
+        command.extend(["--auth-token-registry", str(auth_token_registry)])
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = "src" if not existing_pythonpath else f"src{os.pathsep}{existing_pythonpath}"

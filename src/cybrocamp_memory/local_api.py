@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,11 +15,51 @@ from .hermes_adapter import build_hermes_tool_response
 STATUS_SCHEMA_VERSION = "cybrocamp.local_api.status.v1"
 QUERY_RESPONSE_SCHEMA_VERSION = "cybrocamp.local_api.query_response.v1"
 API_BUNDLE_SCHEMA_VERSION = "cybrocamp.local_api_bundle.v1"
+TOKEN_REGISTRY_SCHEMA_VERSION = "cybrocamp.local_api.token_registry.v1"
 DEFAULT_API_SERVICE_NAME = "cybrocamp-cortex-api"
 DEFAULT_API_HOST = "127.0.0.1"
 DEFAULT_API_PORT = 8765
 _CANONICAL_VAULT_ROOT = Path("/opt/obs/vault")
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+@dataclass(frozen=True)
+class TokenIdentity:
+    name: str
+    token_hash: str
+    role: str
+    allowed_endpoints: tuple[str, ...]
+    max_top_k: int
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class TokenRegistry:
+    identities: tuple[TokenIdentity, ...]
+
+    def to_safe_json(self) -> dict[str, Any]:
+        return {
+            "schema_version": TOKEN_REGISTRY_SCHEMA_VERSION,
+            "tokens": {
+                identity.name: {
+                    "token_hash": identity.token_hash,
+                    "role": identity.role,
+                    "allowed_endpoints": list(identity.allowed_endpoints),
+                    "max_top_k": identity.max_top_k,
+                    "enabled": identity.enabled,
+                }
+                for identity in self.identities
+            },
+        }
+
+
+@dataclass(frozen=True)
+class AuthDecision:
+    allowed: bool
+    reason: str
+    identity: str | None = None
+    role: str | None = None
+    max_top_k: int | None = None
 
 
 def build_api_status(*, artifact_dir: str | Path, timestamp: str) -> dict[str, Any]:
@@ -101,14 +142,17 @@ def build_api_bundle(
     port: int = DEFAULT_API_PORT,
     service_name: str = DEFAULT_API_SERVICE_NAME,
     auth_token_file: str | Path | None = None,
+    auth_token_registry: str | Path | None = None,
 ) -> dict[str, Any]:
     _validate_loopback_host(host)
     _validate_port(port)
     repo = Path(repo_root).expanduser().resolve(strict=False)
     artifacts = _validated_artifact_dir(artifact_dir)
     token_path = _validated_auth_token_file(auth_token_file) if auth_token_file is not None else None
-    runner = _runner_script(repo, artifacts, host, port, auth_token_file=token_path)
-    service = _systemd_service(service_name, repo, runner_path_placeholder=f"%h/.local/bin/{service_name}.sh", auth_token_file=token_path)
+    registry_path = _validated_token_registry_file(auth_token_registry) if auth_token_registry is not None else None
+    _validate_single_auth_source(token_path, registry_path)
+    runner = _runner_script(repo, artifacts, host, port, auth_token_file=token_path, auth_token_registry=registry_path)
+    service = _systemd_service(service_name, repo, runner_path_placeholder=f"%h/.local/bin/{service_name}.sh", auth_token_file=token_path, auth_token_registry=registry_path)
     return {
         "schema_version": API_BUNDLE_SCHEMA_VERSION,
         "service_name": service_name,
@@ -119,6 +163,7 @@ def build_api_bundle(
             "user_bin_runner": f"%h/.local/bin/{service_name}.sh",
             "user_systemd_service": f"%h/.config/systemd/user/{service_name}.service",
             "auth_token_file": str(token_path) if token_path is not None else None,
+            "auth_token_registry": str(registry_path) if registry_path is not None else None,
         },
         "safety_envelope": {
             "canonical_writes": False,
@@ -128,7 +173,8 @@ def build_api_bundle(
             "local_loopback_only": True,
             "user_systemd_only": True,
             "bearer_auth_supported": True,
-            "bearer_auth_required": token_path is not None,
+            "per_sister_bearer_auth_supported": True,
+            "bearer_auth_required": token_path is not None or registry_path is not None,
             "token_serialized": False,
         },
         "runner_script": runner,
@@ -159,11 +205,20 @@ def write_api_bundle(output_dir: str | Path, bundle: Mapping[str, Any]) -> dict[
     return files
 
 
-def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_PORT, auth_token_file: str | Path | None = None) -> None:
+def run_local_api(
+    *,
+    artifact_dir: str | Path,
+    host: str = DEFAULT_API_HOST,
+    port: int = DEFAULT_API_PORT,
+    auth_token_file: str | Path | None = None,
+    auth_token_registry: str | Path | None = None,
+) -> None:
     _validate_loopback_host(host)
     _validate_port(port)
     artifacts = _validated_artifact_dir(artifact_dir)
+    _validate_single_auth_source(auth_token_file, auth_token_registry)
     expected_token = load_auth_token(auth_token_file) if auth_token_file is not None else None
+    token_registry = load_token_registry(auth_token_registry) if auth_token_registry is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "CyBroCampLocalAPI/1.0"
@@ -172,7 +227,9 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
             if self.path != "/status":
                 self._send_json({"error": "not_found"}, status=404)
                 return
-            if not self._authorized():
+            decision = self._auth_decision(endpoint="GET /status")
+            if not decision.allowed:
+                self._send_auth_failure(decision)
                 return
             self._send_json(build_api_status(artifact_dir=artifacts, timestamp=_utc_now()))
 
@@ -180,7 +237,9 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
             if self.path != "/query":
                 self._send_json({"error": "not_found"}, status=404)
                 return
-            if not self._authorized():
+            pre_decision = self._auth_decision(endpoint="POST /query")
+            if not pre_decision.allowed:
+                self._send_auth_failure(pre_decision)
                 return
             try:
                 raw_length = self.headers.get("Content-Length")
@@ -195,7 +254,12 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
                 data = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
                 if not isinstance(data, dict):
                     raise ValueError("payload must be a JSON object")
-                response = build_query_response(artifact_dir=artifacts, payload=data, timestamp=_utc_now())
+                normalized = validate_query_payload(data)
+                decision = self._auth_decision(endpoint="POST /query", requested_top_k=normalized["top_k"])
+                if not decision.allowed:
+                    self._send_auth_failure(decision)
+                    return
+                response = build_query_response(artifact_dir=artifacts, payload=normalized, timestamp=_utc_now())
             except Exception as exc:  # keep daemon fail-closed and non-leaky
                 self._send_json({"error": "bad_request", "message": str(exc)}, status=400)
                 return
@@ -213,13 +277,18 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
             self.end_headers()
             self.wfile.write(body)
 
-        def _authorized(self) -> bool:
+        def _auth_decision(self, *, endpoint: str, requested_top_k: int | None = None) -> AuthDecision:
+            if token_registry is not None:
+                return authorize_bearer_request(self.headers.get("Authorization"), token_registry, endpoint=endpoint, requested_top_k=requested_top_k)
             if expected_token is None:
-                return True
+                return AuthDecision(True, "local_auth_disabled")
             if require_bearer_auth(self.headers.get("Authorization"), expected_token):
-                return True
-            self._send_json({"error": "unauthorized"}, status=401)
-            return False
+                return AuthDecision(True, "single_token", identity="single_token")
+            return AuthDecision(False, "unauthorized")
+
+        def _send_auth_failure(self, decision: AuthDecision) -> None:
+            status = 401 if decision.reason in {"missing_bearer", "invalid_bearer", "unauthorized"} else 403
+            self._send_json({"error": "unauthorized" if status == 401 else "forbidden", "reason": decision.reason}, status=status)
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
@@ -242,6 +311,88 @@ def require_bearer_auth(header: str | None, expected_token: str) -> bool:
     if not isinstance(header, str) or not header.startswith(prefix):
         return False
     return hmac.compare_digest(header[len(prefix) :], expected_token)
+
+
+def load_token_registry(path: str | Path | None) -> TokenRegistry:
+    if path is None:
+        raise ValueError("auth token registry path is required")
+    registry_path = _validated_token_registry_file(path)
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(data, Mapping):
+        raise ValueError("auth token registry must be a JSON object")
+    if data.get("schema_version") != TOKEN_REGISTRY_SCHEMA_VERSION:
+        raise ValueError("unsupported auth token registry schema_version")
+    tokens = data.get("tokens")
+    if not isinstance(tokens, Mapping) or not tokens:
+        raise ValueError("auth token registry must contain tokens")
+    identities: list[TokenIdentity] = []
+    seen_hashes: set[str] = set()
+    for name, raw in tokens.items():
+        if not isinstance(raw, Mapping):
+            raise ValueError("auth token registry entries must be objects")
+        token_hash = raw.get("token_hash")
+        role = raw.get("role", "reader")
+        endpoints = raw.get("allowed_endpoints", [])
+        max_top_k = raw.get("max_top_k", 1)
+        enabled = raw.get("enabled", True)
+        if not isinstance(name, str) or not name:
+            raise ValueError("auth token registry identity names must be non-empty strings")
+        if not isinstance(token_hash, str) or not token_hash.startswith("sha256:") or len(token_hash) != 71 or not _is_sha256_hex(token_hash):
+            raise ValueError("auth token registry token_hash must be sha256:<64 hex>")
+        if token_hash in seen_hashes:
+            raise ValueError("auth token registry token_hash values must be unique")
+        seen_hashes.add(token_hash)
+        if not isinstance(role, str) or not role:
+            raise ValueError("auth token registry role must be a non-empty string")
+        if not isinstance(endpoints, list) or not all(isinstance(item, str) for item in endpoints):
+            raise ValueError("auth token registry allowed_endpoints must be a list of strings")
+        if not isinstance(max_top_k, int) or max_top_k < 1 or max_top_k > 20:
+            raise ValueError("auth token registry max_top_k must be between 1 and 20")
+        if not isinstance(enabled, bool):
+            raise ValueError("auth token registry enabled must be a boolean")
+        identities.append(
+            TokenIdentity(
+                name=name,
+                token_hash=token_hash,
+                role=role,
+                allowed_endpoints=tuple(endpoints),
+                max_top_k=max_top_k,
+                enabled=enabled,
+            )
+        )
+    return TokenRegistry(tuple(identities))
+
+
+def authorize_bearer_request(header: str | None, registry: TokenRegistry, *, endpoint: str, requested_top_k: int | None = None) -> AuthDecision:
+    prefix = "Bearer "
+    if not isinstance(header, str) or not header.startswith(prefix):
+        return AuthDecision(False, "missing_bearer")
+    presented_hash = "sha256:" + hashlib.sha256(header[len(prefix) :].encode("utf-8")).hexdigest()
+    matched: TokenIdentity | None = None
+    for identity in registry.identities:
+        if hmac.compare_digest(presented_hash, identity.token_hash):
+            matched = identity
+            break
+    if matched is None:
+        return AuthDecision(False, "invalid_bearer")
+    if not matched.enabled:
+        return AuthDecision(False, "token_disabled", identity=matched.name, role=matched.role, max_top_k=matched.max_top_k)
+    if endpoint not in matched.allowed_endpoints:
+        return AuthDecision(False, "endpoint_not_allowed", identity=matched.name, role=matched.role, max_top_k=matched.max_top_k)
+    if requested_top_k is not None and requested_top_k > matched.max_top_k:
+        return AuthDecision(False, "top_k_exceeds_token_limit", identity=matched.name, role=matched.role, max_top_k=matched.max_top_k)
+    return AuthDecision(True, "authorized", identity=matched.name, role=matched.role, max_top_k=matched.max_top_k)
+
+
+def hash_bearer_token_value(token: str) -> str:
+    if not token:
+        raise ValueError("token must be non-empty")
+    return "sha256:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _is_sha256_hex(value: str) -> bool:
+    suffix = value.removeprefix("sha256:")
+    return len(suffix) == 64 and all(char in "0123456789abcdefABCDEF" for char in suffix)
 
 
 def _validated_artifact_dir(path: str | Path) -> Path:
@@ -343,12 +494,39 @@ def _validated_auth_token_file(path: str | Path | None) -> Path:
     return candidate
 
 
-def _runner_script(repo: Path, artifacts: Path, host: str, port: int, *, auth_token_file: Path | None = None) -> str:
+def _validated_token_registry_file(path: str | Path | None) -> Path:
+    if path is None:
+        raise ValueError("auth token registry file is empty")
+    candidate = Path(path).expanduser().resolve(strict=False)
+    if _path_contains_canonical_vault(candidate):
+        raise ValueError("auth token registry file must be outside /opt/obs/vault")
+    if not candidate.exists() or not candidate.is_file():
+        raise ValueError("auth token registry file is empty or missing")
+    return candidate
+
+
+def _validate_single_auth_source(auth_token_file: str | Path | None, auth_token_registry: str | Path | None) -> None:
+    if auth_token_file is not None and auth_token_registry is not None:
+        raise ValueError("use either auth_token_file or auth_token_registry, not both")
+
+
+def _runner_script(
+    repo: Path,
+    artifacts: Path,
+    host: str,
+    port: int,
+    *,
+    auth_token_file: Path | None = None,
+    auth_token_registry: Path | None = None,
+) -> str:
     auth_line = ""
     auth_arg = ""
     if auth_token_file is not None:
         auth_line = f"AUTH_TOKEN_FILE={_sh_quote(str(auth_token_file))}\n"
         auth_arg = ' \\\n  --auth-token-file "$AUTH_TOKEN_FILE"'
+    if auth_token_registry is not None:
+        auth_line = f"AUTH_TOKEN_REGISTRY={_sh_quote(str(auth_token_registry))}\n"
+        auth_arg = ' \\\n  --auth-token-registry "$AUTH_TOKEN_REGISTRY"'
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 REPO_ROOT={_sh_quote(str(repo))}
@@ -365,10 +543,19 @@ exec env PYTHONPATH=src "$PY" -m cybrocamp_memory.cli local-api \
 '''
 
 
-def _systemd_service(service_name: str, repo: Path, *, runner_path_placeholder: str, auth_token_file: Path | None = None) -> str:
+def _systemd_service(
+    service_name: str,
+    repo: Path,
+    *,
+    runner_path_placeholder: str,
+    auth_token_file: Path | None = None,
+    auth_token_registry: Path | None = None,
+) -> str:
     auth_environment = ""
     if auth_token_file is not None:
-        auth_environment = f"Environment=CYBROCAMP_LOCAL_API_TOKEN_FILE={auth_token_file}\n"
+        auth_environment = f"Environment=CYBROCAMP_LOCAL_API_TOKEN_FILE={_sh_quote(str(auth_token_file))}\n"
+    if auth_token_registry is not None:
+        auth_environment = f"Environment=CYBROCAMP_LOCAL_API_TOKEN_REGISTRY={_sh_quote(str(auth_token_registry))}\n"
     return f'''[Unit]
 Description=CyBroCamp bounded local cortex query/status API
 Documentation=https://github.com/aquigni/CyBroCamp

@@ -333,10 +333,27 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli local-api-bundle \
   --output-dir data/local-api-bundle \
   --host 127.0.0.1 \
   --port 8765 \
-  --auth-token-file /home/chthonya/.local/share/cybrocamp/secrets/cortex-api-bearer.token
+  --auth-token-registry /home/chthonya/.local/share/cybrocamp/secrets/cortex-api-tokens.json
 ```
 
-`--auth-token-file` опционален для строго локального режима. Перед публикацией loopback service через zrok или любой другой overlay он обязателен. Generated bundle хранит только путь к token file, но не значение token; держать этот файл нужно вне canonical vault с ограниченными permissions.
+`--auth-token-file` остаётся опциональным для строго локального/single-token режима. Для zrok или другого overlay предпочитается `--auth-token-registry`: server-local JSON registry с per-sister `sha256:` token hashes, roles, allowed endpoints и `max_top_k` limits. Generated bundle хранит только путь к registry, но не token values; registry и передачу token values держать вне canonical vault, git, MemPalace и A2A logs.
+
+Пример registry:
+
+```json
+{
+  "schema_version": "cybrocamp.local_api.token_registry.v1",
+  "tokens": {
+    "mac0sh": {
+      "token_hash": "sha256:<64 hex>",
+      "role": "reader",
+      "allowed_endpoints": ["GET /status", "POST /query"],
+      "max_top_k": 5,
+      "enabled": true
+    }
+  }
+}
+```
 
 Generated files:
 
