@@ -34,6 +34,7 @@ The current prototype includes:
 8. **Consolidation gate** — contradiction/staleness checks and strict promotion decisions.
 9. **MemPalace comparison bridge** — metadata-only agreement/divergence comparison.
 10. **Sister-aware query package** — read-only A2A peer recall requests and peer summaries as `a2a_peer_claim`.
+11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes, and baseline drift checks.
 
 ## Installation
 
@@ -145,6 +146,49 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hippo-query \
   --top-k 8
 ```
 
+### Deterministic rebuild
+
+Stage 12 adds a local-only rebuild boundary for all derived artifacts. `--timestamp` is required so reproducible rebuilds can be byte-identical when inputs are unchanged; `--output-dir` must be outside the canonical vault.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli rebuild-all \
+  --vault /opt/obs/vault \
+  --output-dir data/stage12-rebuild \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --timestamp 2026-04-29T00:00:00Z \
+  --max-chars 1200 \
+  --max-terms-per-record 12 \
+  --source-label canonical-vault
+```
+
+This writes:
+
+- `obsidian-manifest.jsonl`
+- `obsidian-chunks.jsonl`
+- `obsidian-search-terms.jsonl`
+- `obsidian-term-graph.jsonl`
+- `obsidian-fact-candidates.jsonl`
+- `run-manifest.json`
+
+`run-manifest.json` contains schema version, epoch, non-secret source label, parameters, record counts, artifact filenames, artifact byte sizes, and `sha256:` hashes. It does not serialize raw note text.
+
+### Programmatic query boundary
+
+Stage 12 also exposes a local importable query boundary:
+
+```python
+from cybrocamp_memory.service import query_artifacts_json
+
+packet = query_artifacts_json(
+    index_path="data/obsidian-search-terms.jsonl",
+    graph_path="data/obsidian-term-graph.jsonl",
+    query="survival economics CyBroSwarm server subscriptions",
+    timestamp="2026-04-29T00:00:00Z",
+)
+```
+
+This is not a daemon. It does not bind ports, call network services, or write canonical Obsidian/MemPalace. It loads derived artifacts and returns a provenance-bearing recall packet.
+
 ## Authority model
 
 Authority classes include:
@@ -181,8 +225,8 @@ Hard gates:
 Generated artifacts are intentionally ignored:
 
 ```text
-data/*.jsonl
-data/*.json
+data/**/*.jsonl
+data/**/*.json
 ```
 
 Do not commit local vault exports, credentials, API keys, tokens, cookies, private keys, or raw secret-bearing derived indexes.

@@ -16,6 +16,7 @@ from .graph_index import (
 )
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
+from .rebuild import rebuild_all
 from .retrieval import recall_query
 from .search_index import (
     load_search_terms_jsonl,
@@ -92,6 +93,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     hippo_query_parser.add_argument("--timestamp", default=None)
     hippo_query_parser.add_argument("--top-k", type=int, default=8)
     hippo_query_parser.add_argument("--no-graph", action="store_true")
+
+    rebuild_parser = subparsers.add_parser("rebuild-all")
+    rebuild_parser.add_argument("--vault", required=True)
+    rebuild_parser.add_argument("--output-dir", required=True)
+    rebuild_parser.add_argument("--epoch", required=True)
+    rebuild_parser.add_argument("--timestamp", required=True)
+    rebuild_parser.add_argument("--max-chars", type=int, default=1200)
+    rebuild_parser.add_argument("--max-terms-per-record", type=int, default=12)
+    rebuild_parser.add_argument("--source-label", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -191,6 +201,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(_packet_to_json_dict(packet), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
         print(f"wrote hippo recall packet with {len(packet.items)} items to {args.output}")
+        return 0
+    if args.command == "rebuild-all":
+        result = rebuild_all(
+            Path(args.vault),
+            Path(args.output_dir),
+            epoch=args.epoch,
+            timestamp=args.timestamp,
+            max_chars=args.max_chars,
+            max_terms_per_record=args.max_terms_per_record,
+            source_label=args.source_label,
+        )
+        print(
+            "rebuilt "
+            f"{result.record_counts['sources']} sources, "
+            f"{result.record_counts['chunks']} chunks, "
+            f"{result.record_counts['search_terms']} search records, "
+            f"{result.record_counts['term_edges']} term edges into {args.output_dir}"
+        )
         return 0
     parser.error("unsupported command")
     return 2
