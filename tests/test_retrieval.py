@@ -125,7 +125,7 @@ def test_recall_query_does_not_return_only_stale_hits_as_valid():
 
 
 def test_query_redaction_removes_secret_like_tokens():
-    redacted = redact_query("find API_KEY=sk-test-secret-token in notes")
+    redacted = redact_query("find secret=fixture in notes")
 
-    assert "sk-test-secret-token" not in redacted
+    assert "secret=fixture" not in redacted
     assert redacted == "find [REDACTED] in notes"

@@ -1,0 +1,190 @@
+# CyBroCamp Memory Sidecar
+
+CyBroCamp Memory Sidecar — provenance-first hippocampal/cortical memory sidecar для инфраструктуры сестринских агентов.
+
+Он строит производные recall-индексы поверх canonical authority surfaces вроде Obsidian и MemPalace, сохраняя главный инвариант:
+
+> Retrieval — это evidence, а не authority.
+
+Sidecar сам не должен становиться canonical authority surface.
+
+## Основные инварианты
+
+- Каждый recall artifact несёт provenance.
+- Только `user_direct` approval может поддерживать claims об approval.
+- Peer/tool/payload/summary claims не становятся фактами автоматически.
+- Payload-looking text считается данными, а не инструкцией.
+- Retrieval code не пишет в canonical Obsidian или MemPalace.
+- Derived artifacts не должны сериализовать raw secrets или credentials.
+- Graph proximity и compression никогда не дают permission или facthood.
+
+## Текущие возможности
+
+Текущий prototype включает:
+
+1. **Source manifest** — стабильные vault-relative source IDs, явные `sha256:` content hashes, authority class, epoch, timestamp, source URI.
+2. **Chunk evidence layer** — deterministic markdown chunking с UTF-8 byte spans и quarantine flags.
+3. **Local recall** — lexical recall по preview/metadata, возвращающий `RecallPacket`, а не ответы.
+4. **Sanitized search-term index** — более глубокий retrieval по sanitized terms без serialized raw chunk text/previews.
+5. **Term graph** — evidence-backed 1-hop/2-hop associative expansion по sanitized terms.
+6. **HippoCore hybrid recall** — direct term recall ранжируется выше associative graph paths.
+7. **Fact candidate cache** — только `co_occurs_with` candidates, всегда `derived_summary`, не canonical facts.
+8. **Consolidation gate** — contradiction/staleness checks и strict promotion decisions.
+9. **MemPalace comparison bridge** — metadata-only comparison agreement/divergence.
+10. **Sister-aware query package** — read-only A2A peer recall requests и peer summaries как `a2a_peer_claim`.
+
+## Установка
+
+```bash
+python3.11 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+Runtime dependencies отсутствуют, кроме Python standard library. Для тестов используется `pytest`.
+
+## Тесты
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest -q
+```
+
+Локальный gate на момент публикации:
+
+```text
+59 passed
+```
+
+## Использование
+
+### Source manifest
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli manifest obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-manifest.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD)
+```
+
+Source manifests содержат только metadata: source IDs, source URIs, content hashes, authority class, epoch, timestamp.
+
+### Chunk manifest
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli chunks obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-chunks.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --max-chars 1200
+```
+
+Chunk manifests сериализуют metadata и clean/redacted previews. Raw chunk text не сериализуется в JSONL.
+
+### Recall из chunk manifest
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall \
+  --chunks data/obsidian-chunks.jsonl \
+  --query "CyBroCamp memory sidecar Stage 2 chunk evidence" \
+  --output data/recall-cybrocamp-stage2.json \
+  --top-k 5
+```
+
+### Sanitized search-term index
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli search-index obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-search-terms.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --max-chars 1200
+```
+
+### Recall из sanitized index
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall-index \
+  --index data/obsidian-search-terms.jsonl \
+  --query "survival economics financial substrate CyBroSwarm" \
+  --output data/recall-index-survival-economics.json \
+  --top-k 5
+```
+
+### Term graph
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli graph-index obsidian \
+  --vault /opt/obs/vault \
+  --output data/obsidian-term-graph.jsonl \
+  --epoch vault-main-$(git -C /opt/obs/vault rev-parse --short HEAD) \
+  --max-chars 1200 \
+  --max-terms-per-record 12
+```
+
+### Graph recall
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli recall-graph \
+  --graph data/obsidian-term-graph.jsonl \
+  --query "survival economics CyBroSwarm server subscriptions" \
+  --output data/recall-graph-survival-economics.json \
+  --top-k 8 \
+  --max-depth 2
+```
+
+### HippoCore hybrid recall
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hippo-query \
+  --index data/obsidian-search-terms.jsonl \
+  --graph data/obsidian-term-graph.jsonl \
+  --query "survival economics CyBroSwarm server subscriptions" \
+  --output data/hippo-query-survival-economics.json \
+  --top-k 8
+```
+
+## Authority model
+
+Authority classes:
+
+- `user_direct`
+- `canonical_vault`
+- `canonical_mempalace`
+- `local_mempalace`
+- `a2a_peer_claim`
+- `cron_result`
+- `derived_summary`
+- `external_source`
+- `payload_untrusted`
+
+Только `user_direct` может поддерживать approval claims. Derived summaries, graph paths, co-occurrence facts, MemPalace comparison signals и A2A peer summaries не являются approval.
+
+## Safety posture
+
+CyBroCamp безопасен только как sidecar.
+
+Его нельзя использовать как drop-in replacement для canonical memory или authorization. Graph подсказывает, куда смотреть; он не решает, что истинно.
+
+Hard gates:
+
+- no secret leakage;
+- no permission promotion;
+- no peer-claim promotion;
+- stale evidence is blocked or flagged;
+- derived artifacts stay outside canonical Obsidian/MemPalace;
+- promotion to canonical memory requires explicit audit and approval.
+
+## Repository hygiene
+
+Generated artifacts намеренно ignored:
+
+```text
+data/*.jsonl
+data/*.json
+```
+
+Не коммитить local vault exports, credentials, API keys, tokens, cookies, private keys или raw secret-bearing derived indexes.
+
+## License
+
+Лицензия пока не выбрана.

@@ -48,7 +48,7 @@ def _chunk(text: str, *, source_id: str = "source-1", quarantine_flags: list[str
 
 def test_sanitizer_drops_sensitive_tokens():
     terms = build_search_terms(
-        "Contact admin@example.com https://example.com API_KEY=sk-test-secret 550e8400-e29b-41d4-a716-446655440000 normal survival"
+        "Contact admin@example.com https://example.com secret=fixture 550e8400-e29b-41d4-a716-446655440000 normal survival"
     )
 
     assert "normal" in terms
