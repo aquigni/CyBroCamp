@@ -40,6 +40,7 @@ Sidecar сам не должен становиться canonical authority surf
 16. **Stage 17 controlled execution receipt** — double-approved local receipts для reviewed operations; canonical network writes не выполняются.
 17. **Stage 18 cortex rollout** — rollout трёх сестёр и auto-enrollment policy для будущих сестёр с least-privilege rights.
 18. **Operational persistence bundle** — user-systemd timer и безопасный rebuild runner для постоянных derived cortex artifacts вне `/opt/obs/vault`.
+19. **Bounded local query/status API** — loopback-only `GET /status` и `POST /query` поверх persistent artifacts, без canonical mutation и approval promotion.
 
 ## Установка
 
@@ -320,6 +321,46 @@ Generated files:
 - `persistence-bundle.json`
 
 Целевой installation layer — user systemd: `~/.local/bin/` и `~/.config/systemd/user/`. Timer использует `Persistent=true`, `OnBootSec=2min` и `OnUnitActiveSec=<N>min`.
+
+### Bounded local query/status API
+
+Local API bundle открывает persistent cortex artifacts для sister agents через loopback-only HTTP. Граница намеренно узкая: без canonical Obsidian/MemPalace writes, без approval-state writes и без network calls к canonical stores. Ответы сохраняют safety flags Hermes adapter и provenance-bearing recall packets.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli local-api-bundle \
+  --repo-root /home/chthonya/projects/cybrocamp-memory \
+  --artifact-dir /home/chthonya/.local/share/cybrocamp/cortex/current \
+  --output-dir data/local-api-bundle \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+Generated files:
+
+- `cybrocamp-cortex-api.sh`
+- `cybrocamp-cortex-api.service`
+- `local-api-bundle.json`
+
+Установка как user service:
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+install -m 0755 data/local-api-bundle/cybrocamp-cortex-api.sh ~/.local/bin/cybrocamp-cortex-api.sh
+install -m 0644 data/local-api-bundle/cybrocamp-cortex-api.service ~/.config/systemd/user/cybrocamp-cortex-api.service
+systemctl --user daemon-reload
+systemctl --user enable --now cybrocamp-cortex-api.service
+```
+
+Runtime endpoints:
+
+```bash
+curl -fsS http://127.0.0.1:8765/status
+curl -fsS -X POST http://127.0.0.1:8765/query \
+  -H 'Content-Type: application/json' \
+  --data '{"query":"survival economics CyBroSwarm server subscriptions","top_k":3}'
+```
+
+`GET /status` возвращает наличие artifacts, byte sizes, `sha256:` hashes, run-manifest counts и safety flags. `POST /query` возвращает `cybrocamp.local_api.query_response.v1`, оборачивая `cybrocamp.hermes_tool_response.v1` с `canonical_writes=false`, `network_calls=false`, `local_loopback_only=true` и `requires_human_approval_for_promotion=true`.
 
 ## Authority model
 

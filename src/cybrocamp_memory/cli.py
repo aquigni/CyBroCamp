@@ -18,6 +18,14 @@ from .graph_index import (
 )
 from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
+from .local_api import (
+    build_api_bundle,
+    build_api_status,
+    build_query_response,
+    run_local_api,
+    write_api_bundle,
+    write_api_json_response,
+)
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .operational_persistence import build_persistence_bundle, write_persistence_bundle
 from .promotion_audit import audit_promotion_candidates, write_promotion_audit_json
@@ -165,6 +173,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     persistence_parser.add_argument("--artifact-root", required=True)
     persistence_parser.add_argument("--output-dir", required=True)
     persistence_parser.add_argument("--interval-minutes", type=int, default=30)
+
+    api_status_parser = subparsers.add_parser("local-api-status")
+    api_status_parser.add_argument("--artifact-dir", required=True)
+    api_status_parser.add_argument("--output", default=None)
+    api_status_parser.add_argument("--timestamp", required=True)
+
+    api_query_parser = subparsers.add_parser("local-api-query")
+    api_query_parser.add_argument("--artifact-dir", required=True)
+    api_query_parser.add_argument("--query", required=True)
+    api_query_parser.add_argument("--output", required=True)
+    api_query_parser.add_argument("--timestamp", required=True)
+    api_query_parser.add_argument("--top-k", type=int, default=8)
+    api_query_parser.add_argument("--no-graph", action="store_true")
+
+    api_bundle_parser = subparsers.add_parser("local-api-bundle")
+    api_bundle_parser.add_argument("--repo-root", required=True)
+    api_bundle_parser.add_argument("--artifact-dir", required=True)
+    api_bundle_parser.add_argument("--output-dir", required=True)
+    api_bundle_parser.add_argument("--host", default="127.0.0.1")
+    api_bundle_parser.add_argument("--port", type=int, default=8765)
+
+    api_server_parser = subparsers.add_parser("local-api")
+    api_server_parser.add_argument("--artifact-dir", required=True)
+    api_server_parser.add_argument("--host", default="127.0.0.1")
+    api_server_parser.add_argument("--port", type=int, default=8765)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -368,6 +401,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         written = write_persistence_bundle(Path(args.output_dir), bundle)
         print(f"wrote CyBroCamp persistence bundle to {Path(args.output_dir)} ({len(written)} files)")
+        return 0
+    if args.command == "local-api-status":
+        status = build_api_status(artifact_dir=Path(args.artifact_dir), timestamp=args.timestamp)
+        if args.output:
+            write_api_json_response(args.output, status)
+            print(f"wrote local API status to {args.output}")
+        else:
+            print(json.dumps(status, ensure_ascii=False, sort_keys=True, indent=2))
+        return 0
+    if args.command == "local-api-query":
+        response = build_query_response(
+            artifact_dir=Path(args.artifact_dir),
+            payload={"query": args.query, "top_k": args.top_k, "include_graph": not args.no_graph},
+            timestamp=args.timestamp,
+        )
+        output = write_api_json_response(args.output, response)
+        print(f"wrote local API query response to {output}")
+        return 0
+    if args.command == "local-api-bundle":
+        bundle = build_api_bundle(
+            repo_root=Path(args.repo_root),
+            artifact_dir=Path(args.artifact_dir),
+            host=args.host,
+            port=args.port,
+        )
+        written = write_api_bundle(Path(args.output_dir), bundle)
+        print(f"wrote CyBroCamp local API bundle to {Path(args.output_dir)} ({len(written)} files)")
+        return 0
+    if args.command == "local-api":
+        run_local_api(artifact_dir=Path(args.artifact_dir), host=args.host, port=args.port)
         return 0
     parser.error("unsupported command")
     return 2
