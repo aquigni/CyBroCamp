@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .chunks import chunk_records_from_obsidian, load_chunk_manifest_jsonl, write_chunk_manifest_jsonl
 from .eval_suite import run_eval_suite
+from .fact_cache import load_fact_cache_jsonl
 from .graph_index import (
     load_term_graph_jsonl,
     recall_from_term_graph,
@@ -18,6 +19,7 @@ from .graph_index import (
 from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
+from .promotion_audit import audit_promotion_candidates, write_promotion_audit_json
 from .rebuild import rebuild_all
 from .retrieval import recall_query
 from .search_index import (
@@ -121,6 +123,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     hermes_query_parser.add_argument("--timestamp", required=True)
     hermes_query_parser.add_argument("--top-k", type=int, default=8)
     hermes_query_parser.add_argument("--no-graph", action="store_true")
+
+    promotion_audit_parser = subparsers.add_parser("promotion-audit")
+    promotion_audit_parser.add_argument("--facts", required=True)
+    promotion_audit_parser.add_argument("--output", required=True)
+    promotion_audit_parser.add_argument("--timestamp", required=True)
+    promotion_audit_parser.add_argument("--current-source-hashes", default=None)
+    promotion_audit_parser.add_argument("--current-chunk-hashes", default=None)
+    promotion_audit_parser.add_argument("--mempalace-comparison", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -266,8 +276,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         output.write_text(json.dumps(response, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
         print(f"wrote Hermes tool response to {args.output}")
         return 0
+    if args.command == "promotion-audit":
+        facts = load_fact_cache_jsonl(Path(args.facts))
+        report = audit_promotion_candidates(
+            facts,
+            current_source_hashes=_load_json_object(args.current_source_hashes),
+            current_chunk_hashes=_load_json_object(args.current_chunk_hashes),
+            mempalace_comparisons=_load_json_list(args.mempalace_comparison),
+            timestamp=args.timestamp,
+        )
+        write_promotion_audit_json(Path(args.output), report)
+        print(f"wrote promotion audit report with {len(report.items)} items to {args.output}")
+        return 0
     parser.error("unsupported command")
     return 2
+
+
+def _load_json_object(path: str | None) -> dict[str, str] | None:
+    if path is None:
+        return None
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("expected JSON object")
+    return {str(key): str(value) for key, value in data.items()}
+
+
+def _load_json_list(path: str | None) -> list[dict[str, object]]:
+    if path is None:
+        return []
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        return [data]
+    if not isinstance(data, list):
+        raise ValueError("expected JSON list or object")
+    return [item for item in data if isinstance(item, dict)]
 
 
 def _packet_to_json_dict(packet) -> dict[str, object]:

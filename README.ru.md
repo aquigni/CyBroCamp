@@ -34,6 +34,7 @@ Sidecar сам не должен становиться canonical authority surf
 10. **Sister-aware query package** — read-only A2A peer recall requests и peer summaries как `a2a_peer_claim`.
 11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes и baseline drift checks.
 12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite и safe Hermes tool response wrapper.
+13. **Stage 14 promotion audit** — side-effect-free candidate review reports с evidence bundles, contradiction/staleness summaries и явными H0st approval gates.
 
 ## Установка
 
@@ -54,7 +55,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Локальный gate на момент публикации:
 
 ```text
-59 passed
+89 passed
 ```
 
 ## Использование
@@ -218,6 +219,19 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hermes-query \
 ```
 
 Wrapper возвращает `cybrocamp.hermes_tool_response.v1` с `canonical_writes=false`, `network_calls=false` и `requires_human_approval_for_promotion=true`.
+
+### Stage 14 promotion audit
+
+Stage 14 добавляет no-write promotion audit report для проверки fact candidates до любого canonical memory action:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-audit \
+  --facts data/obsidian-fact-candidates.jsonl \
+  --output data/stage14-promotion-audit.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Опциональные `--current-source-hashes`, `--current-chunk-hashes` и `--mempalace-comparison` добавляют freshness checks и metadata-only MemPalace comparison. Report пишет `cybrocamp.promotion_audit.v1`, держит `canonical_writes=false`, включает evidence bundles с source/chunk hashes и UTF-8 byte spans, суммирует local contradictions, запрещает output внутри canonical vault и помечает каждый candidate как требующий explicit H0st approval before promotion.
 
 ## Authority model
 

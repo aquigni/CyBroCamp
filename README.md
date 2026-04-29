@@ -36,6 +36,7 @@ The current prototype includes:
 10. **Sister-aware query package** — read-only A2A peer recall requests and peer summaries as `a2a_peer_claim`.
 11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes, and baseline drift checks.
 12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite, and safe Hermes tool response wrapper.
+13. **Stage 14 promotion audit** — side-effect-free candidate review reports with evidence bundles, contradiction/staleness summaries, and explicit H0st approval gates.
 
 ## Installation
 
@@ -56,7 +57,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Current local gate at publication time:
 
 ```text
-59 passed
+89 passed
 ```
 
 ## Usage
@@ -220,6 +221,19 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hermes-query \
 ```
 
 The wrapper returns `cybrocamp.hermes_tool_response.v1` with `canonical_writes=false`, `network_calls=false`, and `requires_human_approval_for_promotion=true`.
+
+### Stage 14 promotion audit
+
+Stage 14 adds a no-write promotion audit report for reviewing fact candidates before any canonical memory action:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-audit \
+  --facts data/obsidian-fact-candidates.jsonl \
+  --output data/stage14-promotion-audit.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Optional `--current-source-hashes`, `--current-chunk-hashes`, and `--mempalace-comparison` inputs add freshness checks and metadata-only MemPalace comparison. The report writes `cybrocamp.promotion_audit.v1`, keeps `canonical_writes=false`, includes evidence bundles with source/chunk hashes and UTF-8 byte spans, summarizes local contradictions, rejects report output inside the canonical vault, and marks every candidate as requiring explicit H0st approval before promotion.
 
 ## Authority model
 
