@@ -20,6 +20,7 @@ from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .promotion_audit import audit_promotion_candidates, write_promotion_audit_json
+from .promotion_plan import build_promotion_plan, write_promotion_plan_json
 from .rebuild import rebuild_all
 from .retrieval import recall_query
 from .search_index import (
@@ -131,6 +132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     promotion_audit_parser.add_argument("--current-source-hashes", default=None)
     promotion_audit_parser.add_argument("--current-chunk-hashes", default=None)
     promotion_audit_parser.add_argument("--mempalace-comparison", default=None)
+
+    promotion_plan_parser = subparsers.add_parser("promotion-plan")
+    promotion_plan_parser.add_argument("--audit", required=True)
+    promotion_plan_parser.add_argument("--output", required=True)
+    promotion_plan_parser.add_argument("--timestamp", required=True)
+    promotion_plan_parser.add_argument("--approval-scope", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -288,6 +295,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_promotion_audit_json(Path(args.output), report)
         print(f"wrote promotion audit report with {len(report.items)} items to {args.output}")
         return 0
+    if args.command == "promotion-plan":
+        audit_report = json.loads(Path(args.audit).read_text(encoding="utf-8"))
+        if not isinstance(audit_report, dict):
+            raise ValueError("expected promotion audit JSON object")
+        plan = build_promotion_plan(
+            audit_report,
+            approval_scope=_load_json_mapping(args.approval_scope),
+            timestamp=args.timestamp,
+        )
+        write_promotion_plan_json(Path(args.output), plan)
+        print(f"wrote promotion plan with {len(plan.dry_run_ops)} dry-run ops to {args.output}")
+        return 0
     parser.error("unsupported command")
     return 2
 
@@ -310,6 +329,15 @@ def _load_json_list(path: str | None) -> list[dict[str, object]]:
     if not isinstance(data, list):
         raise ValueError("expected JSON list or object")
     return [item for item in data if isinstance(item, dict)]
+
+
+def _load_json_mapping(path: str | None) -> dict[str, object] | None:
+    if path is None:
+        return None
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("expected JSON object")
+    return data
 
 
 def _packet_to_json_dict(packet) -> dict[str, object]:

@@ -35,6 +35,7 @@ Sidecar сам не должен становиться canonical authority surf
 11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes и baseline drift checks.
 12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite и safe Hermes tool response wrapper.
 13. **Stage 14 promotion audit** — side-effect-free candidate review reports с evidence bundles, contradiction/staleness summaries и явными H0st approval gates.
+14. **Stage 15 promotion plan** — approval-gated dry-run promotion plans, создающие non-writing operations только для exact H0st-approved candidates.
 
 ## Установка
 
@@ -55,7 +56,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Локальный gate на момент публикации:
 
 ```text
-89 passed
+98 passed
 ```
 
 ## Использование
@@ -232,6 +233,29 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-audit \
 ```
 
 Опциональные `--current-source-hashes`, `--current-chunk-hashes` и `--mempalace-comparison` добавляют freshness checks и metadata-only MemPalace comparison. Report пишет `cybrocamp.promotion_audit.v1`, держит `canonical_writes=false`, включает evidence bundles с source/chunk hashes и UTF-8 byte spans, суммирует local contradictions, запрещает output внутри canonical vault и помечает каждый candidate как требующий explicit H0st approval before promotion.
+
+### Stage 15 promotion plan
+
+Stage 15 превращает Stage 14 audit report в deterministic dry-run plan. Без explicit approval-scope файла plan создаёт ноль operations:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-plan \
+  --audit data/stage14-promotion-audit.json \
+  --output data/stage15-promotion-plan.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+С approval-scope JSON схемы `cybrocamp.approval_scope.v1` только exact `(candidate_id, action)` match, approved by `H0st`, может создать dry-run operation:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-plan \
+  --audit data/stage14-promotion-audit.json \
+  --approval-scope data/stage15-approval-scope.json \
+  --output data/stage15-promotion-plan.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Plan пишет `cybrocamp.promotion_plan.v1` с `mode="dry_run"`, `canonical_writes=false`, `network_calls=false`, `would_write=false` для всех generated ops, sanitized candidate summaries, deterministic IDs/hashes и запретом output внутри `/opt/obs/vault`. Blocked audit items никогда не становятся operations, даже если approval-scope file их называет.
 
 ## Authority model
 
