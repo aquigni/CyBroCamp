@@ -35,6 +35,7 @@ The current prototype includes:
 9. **MemPalace comparison bridge** — metadata-only agreement/divergence comparison.
 10. **Sister-aware query package** — read-only A2A peer recall requests and peer summaries as `a2a_peer_claim`.
 11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes, and baseline drift checks.
+12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite, and safe Hermes tool response wrapper.
 
 ## Installation
 
@@ -188,6 +189,37 @@ packet = query_artifacts_json(
 ```
 
 This is not a daemon. It does not bind ports, call network services, or write canonical Obsidian/MemPalace. It loads derived artifacts and returns a provenance-bearing recall packet.
+
+### Stage 13 eval suite
+
+Stage 13 adds checked-in sanitized synthetic fixtures under `tests/fixtures/stage13/` and a multi-query regression gate:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli eval-suite \
+  --index tests/fixtures/stage13/search_terms.jsonl \
+  --graph tests/fixtures/stage13/term_graph.jsonl \
+  --cases tests/fixtures/stage13/eval_cases.json \
+  --output data/stage13-eval-report.json \
+  --timestamp 2026-04-29T00:00:00Z \
+  --top-k 5
+```
+
+The report stores case IDs, pass/fail, expected source IDs, observed source IDs, and drift/staleness failures. It does not store raw vault text.
+
+### Hermes tool adapter
+
+Stage 13 also exposes a safe local Hermes-facing wrapper:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hermes-query \
+  --index data/obsidian-search-terms.jsonl \
+  --graph data/obsidian-term-graph.jsonl \
+  --query "survival economics CyBroSwarm server subscriptions" \
+  --output data/hermes-query-survival-economics.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+The wrapper returns `cybrocamp.hermes_tool_response.v1` with `canonical_writes=false`, `network_calls=false`, and `requires_human_approval_for_promotion=true`.
 
 ## Authority model
 

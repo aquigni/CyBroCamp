@@ -33,6 +33,7 @@ Sidecar сам не должен становиться canonical authority surf
 9. **MemPalace comparison bridge** — metadata-only comparison agreement/divergence.
 10. **Sister-aware query package** — read-only A2A peer recall requests и peer summaries как `a2a_peer_claim`.
 11. **Stage 12 service boundary** — local-only programmatic query API, deterministic rebuild command, run manifest, artifact hashes и baseline drift checks.
+12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite и safe Hermes tool response wrapper.
 
 ## Установка
 
@@ -186,6 +187,37 @@ packet = query_artifacts_json(
 ```
 
 Это не daemon. Он не bind-ит ports, не вызывает network services и не пишет в canonical Obsidian/MemPalace. Он загружает derived artifacts и возвращает provenance-bearing recall packet.
+
+### Stage 13 eval suite
+
+Stage 13 добавляет checked-in sanitized synthetic fixtures в `tests/fixtures/stage13/` и multi-query regression gate:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli eval-suite \
+  --index tests/fixtures/stage13/search_terms.jsonl \
+  --graph tests/fixtures/stage13/term_graph.jsonl \
+  --cases tests/fixtures/stage13/eval_cases.json \
+  --output data/stage13-eval-report.json \
+  --timestamp 2026-04-29T00:00:00Z \
+  --top-k 5
+```
+
+Report хранит case IDs, pass/fail, expected source IDs, observed source IDs и drift/staleness failures. Raw vault text туда не пишется.
+
+### Hermes tool adapter
+
+Stage 13 также добавляет safe local Hermes-facing wrapper:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli hermes-query \
+  --index data/obsidian-search-terms.jsonl \
+  --graph data/obsidian-term-graph.jsonl \
+  --query "survival economics CyBroSwarm server subscriptions" \
+  --output data/hermes-query-survival-economics.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Wrapper возвращает `cybrocamp.hermes_tool_response.v1` с `canonical_writes=false`, `network_calls=false` и `requires_human_approval_for_promotion=true`.
 
 ## Authority model
 

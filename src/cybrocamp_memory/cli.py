@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Sequence
 
 from .chunks import chunk_records_from_obsidian, load_chunk_manifest_jsonl, write_chunk_manifest_jsonl
+from .eval_suite import run_eval_suite
 from .graph_index import (
     load_term_graph_jsonl,
     recall_from_term_graph,
     term_graph_from_obsidian,
     write_term_graph_jsonl,
 )
+from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .rebuild import rebuild_all
@@ -102,6 +104,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     rebuild_parser.add_argument("--max-chars", type=int, default=1200)
     rebuild_parser.add_argument("--max-terms-per-record", type=int, default=12)
     rebuild_parser.add_argument("--source-label", default=None)
+
+    eval_suite_parser = subparsers.add_parser("eval-suite")
+    eval_suite_parser.add_argument("--index", required=True)
+    eval_suite_parser.add_argument("--graph", required=True)
+    eval_suite_parser.add_argument("--cases", required=True)
+    eval_suite_parser.add_argument("--output", required=True)
+    eval_suite_parser.add_argument("--timestamp", required=True)
+    eval_suite_parser.add_argument("--top-k", type=int, default=8)
+
+    hermes_query_parser = subparsers.add_parser("hermes-query")
+    hermes_query_parser.add_argument("--index", required=True)
+    hermes_query_parser.add_argument("--graph", required=True)
+    hermes_query_parser.add_argument("--query", required=True)
+    hermes_query_parser.add_argument("--output", required=True)
+    hermes_query_parser.add_argument("--timestamp", required=True)
+    hermes_query_parser.add_argument("--top-k", type=int, default=8)
+    hermes_query_parser.add_argument("--no-graph", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -219,6 +238,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.record_counts['search_terms']} search records, "
             f"{result.record_counts['term_edges']} term edges into {args.output_dir}"
         )
+        return 0
+    if args.command == "eval-suite":
+        result = run_eval_suite(
+            index_path=Path(args.index),
+            graph_path=Path(args.graph),
+            cases_path=Path(args.cases),
+            timestamp=args.timestamp,
+            top_k=args.top_k,
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result.to_json_dict(), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        print(f"wrote eval suite report with {result.case_count} cases to {args.output}")
+        return 0 if result.passed else 1
+    if args.command == "hermes-query":
+        response = build_hermes_tool_response(
+            index_path=Path(args.index),
+            graph_path=Path(args.graph),
+            query=args.query,
+            timestamp=args.timestamp,
+            top_k=args.top_k,
+            include_graph=not args.no_graph,
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(response, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        print(f"wrote Hermes tool response to {args.output}")
         return 0
     parser.error("unsupported command")
     return 2

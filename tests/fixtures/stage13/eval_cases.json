@@ -1,0 +1,17 @@
+{
+  "schema_version": "cybrocamp.eval_cases.v1",
+  "cases": [
+    {
+      "case_id": "stage13-hermes-adapter",
+      "query": "stage13 hermes adapter eval drift",
+      "expected_source_order": ["synthetic/cybrocamp-stage13.md"],
+      "max_rank_by_source": {"synthetic/cybrocamp-stage13.md": 1}
+    },
+    {
+      "case_id": "survival-economics",
+      "query": "survival economics subscriptions servers",
+      "expected_source_order": ["synthetic/survival-economics.md"],
+      "max_rank_by_source": {"synthetic/survival-economics.md": 1}
+    }
+  ]
+}
