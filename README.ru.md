@@ -36,6 +36,9 @@ Sidecar сам не должен становиться canonical authority surf
 12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite и safe Hermes tool response wrapper.
 13. **Stage 14 promotion audit** — side-effect-free candidate review reports с evidence bundles, contradiction/staleness summaries и явными H0st approval gates.
 14. **Stage 15 promotion plan** — approval-gated dry-run promotion plans, создающие non-writing operations только для exact H0st-approved candidates.
+15. **Stage 16 locked preview** — второй locked review harness поверх Stage 15 plans, всё ещё без canonical writes.
+16. **Stage 17 controlled execution receipt** — double-approved local receipts для reviewed operations; canonical network writes не выполняются.
+17. **Stage 18 cortex rollout** — rollout трёх сестёр и auto-enrollment policy для будущих сестёр с least-privilege rights.
 
 ## Установка
 
@@ -56,7 +59,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Локальный gate на момент публикации:
 
 ```text
-98 passed
+113 passed
 ```
 
 ## Использование
@@ -256,6 +259,44 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-plan \
 ```
 
 Plan пишет `cybrocamp.promotion_plan.v1` с `mode="dry_run"`, `canonical_writes=false`, `network_calls=false`, `would_write=false` для всех generated ops, sanitized candidate summaries, deterministic IDs/hashes и запретом output внутри `/opt/obs/vault`. Blocked audit items никогда не становятся operations, даже если approval-scope file их называет.
+
+### Stage 16 locked preview
+
+Stage 16 превращает Stage 15 plan в locked preview packet. Это review harness, не writer: без `cybrocamp.preview_lock.v1` файла от `H0st` preview writes остаются blocked.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-preview \
+  --plan data/stage15-promotion-plan.json \
+  --output data/stage16-locked-preview.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Matching lock scope может разблокировать preview rows только для inspection. `canonical_writes=false`, `network_calls=false`, `would_write=false` и `requires_second_h0st_approval_for_execution=true` сохраняются.
+
+### Stage 17 controlled execution receipt
+
+Stage 17 принимает locked preview и опциональный второй explicit execution approval схемы `cybrocamp.execution_approval.v1`. Команда пишет только local receipt; она не вызывает MemPalace, Obsidian, KG APIs или network services.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-execute \
+  --preview data/stage16-locked-preview.json \
+  --output data/stage17-execution-receipt.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Даже когда execution approval совпадает с preview hash и operation IDs, sink остаётся `local_receipt_only`, а `canonical_network_write_performed=false`. Receipt — auditable bridge к будущему canonical writer, но не сам writer.
+
+### Stage 18 cortex rollout
+
+Stage 18 выпускает sister-cortex rollout policy для Chthonya, Mac0sh, Debi0 и будущих сестёр. Он моделирует least-privilege rights, authority каждого node и auto-enrollment default.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli cortex-rollout \
+  --output data/stage18-cortex-rollout.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Будущие сёстры автоматически входят как `quarantined_readonly_until_explicit_approval`. Они могут делать bounded recall queries, но не могут строить canonical indexes, preview/execute promotions, писать canonical MemPalace, мутировать services или выдавать H0st approval.
 
 ## Authority model
 

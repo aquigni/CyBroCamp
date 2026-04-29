@@ -38,6 +38,9 @@ The current prototype includes:
 12. **Stage 13 eval/tool adapter** — checked-in sanitized eval fixtures, multi-query eval suite, and safe Hermes tool response wrapper.
 13. **Stage 14 promotion audit** — side-effect-free candidate review reports with evidence bundles, contradiction/staleness summaries, and explicit H0st approval gates.
 14. **Stage 15 promotion plan** — approval-gated dry-run promotion plans that generate non-writing operations only for exact H0st-approved candidates.
+15. **Stage 16 locked preview** — a second locked, human-readable preview harness over Stage 15 plans, still non-writing.
+16. **Stage 17 controlled execution receipt** — double-approved local receipts for reviewed operations; no canonical network writes are performed.
+17. **Stage 18 cortex rollout** — three-sister rollout and future-sister auto-enrollment policy with least-privilege rights.
 
 ## Installation
 
@@ -58,7 +61,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Current local gate at publication time:
 
 ```text
-98 passed
+113 passed
 ```
 
 ## Usage
@@ -258,6 +261,44 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-plan \
 ```
 
 The plan writes `cybrocamp.promotion_plan.v1` with `mode="dry_run"`, `canonical_writes=false`, `network_calls=false`, `would_write=false` for all generated ops, sanitized candidate summaries, deterministic IDs/hashes, and output rejection under `/opt/obs/vault`. Blocked audit items never become operations, even if an approval-scope file names them.
+
+### Stage 16 locked preview
+
+Stage 16 turns a Stage 15 plan into a locked preview packet. It is a review harness, not a writer: without a `cybrocamp.preview_lock.v1` file from `H0st`, preview writes stay blocked.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-preview \
+  --plan data/stage15-promotion-plan.json \
+  --output data/stage16-locked-preview.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+A matching lock scope can unlock preview rows for inspection only. `canonical_writes=false`, `network_calls=false`, `would_write=false`, and `requires_second_h0st_approval_for_execution=true` remain enforced.
+
+### Stage 17 controlled execution receipt
+
+Stage 17 consumes a locked preview and optionally a second explicit execution approval of schema `cybrocamp.execution_approval.v1`. The command writes a local receipt only; it does not call MemPalace, Obsidian, KG APIs, or any network service.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli promotion-execute \
+  --preview data/stage16-locked-preview.json \
+  --output data/stage17-execution-receipt.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Even when execution approval matches the preview hash and operation IDs, the sink is `local_receipt_only` and `canonical_network_write_performed=false`. The receipt is an auditable bridge toward a future canonical writer, not that writer itself.
+
+### Stage 18 cortex rollout
+
+Stage 18 emits the sister-cortex rollout policy for Chthonya, Mac0sh, Debi0, and future sisters. It models least-privilege rights, authority emitted by each node, and the auto-enrollment default for future sisters.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli cortex-rollout \
+  --output data/stage18-cortex-rollout.json \
+  --timestamp 2026-04-29T00:00:00Z
+```
+
+Future sisters auto-enter as `quarantined_readonly_until_explicit_approval`. They may query bounded recall surfaces but cannot build canonical indexes, preview/execute promotions, write canonical MemPalace, mutate services, or grant H0st approval.
 
 ## Authority model
 

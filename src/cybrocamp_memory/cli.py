@@ -20,8 +20,11 @@ from .hermes_adapter import build_hermes_tool_response
 from .hippo_core import hybrid_recall
 from .manifest import manifest_records_from_obsidian, write_manifest_jsonl
 from .promotion_audit import audit_promotion_candidates, write_promotion_audit_json
+from .promotion_execution import build_execution_receipt, write_execution_receipt_json
 from .promotion_plan import build_promotion_plan, write_promotion_plan_json
+from .promotion_preview import build_locked_preview, write_locked_preview_json
 from .rebuild import rebuild_all
+from .sister_rollout import build_cortex_rollout, write_cortex_rollout_json
 from .retrieval import recall_query
 from .search_index import (
     load_search_terms_jsonl,
@@ -138,6 +141,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     promotion_plan_parser.add_argument("--output", required=True)
     promotion_plan_parser.add_argument("--timestamp", required=True)
     promotion_plan_parser.add_argument("--approval-scope", default=None)
+
+    promotion_preview_parser = subparsers.add_parser("promotion-preview")
+    promotion_preview_parser.add_argument("--plan", required=True)
+    promotion_preview_parser.add_argument("--output", required=True)
+    promotion_preview_parser.add_argument("--timestamp", required=True)
+    promotion_preview_parser.add_argument("--lock-scope", default=None)
+
+    promotion_execute_parser = subparsers.add_parser("promotion-execute")
+    promotion_execute_parser.add_argument("--preview", required=True)
+    promotion_execute_parser.add_argument("--output", required=True)
+    promotion_execute_parser.add_argument("--timestamp", required=True)
+    promotion_execute_parser.add_argument("--execution-approval", default=None)
+
+    cortex_rollout_parser = subparsers.add_parser("cortex-rollout")
+    cortex_rollout_parser.add_argument("--output", required=True)
+    cortex_rollout_parser.add_argument("--timestamp", required=True)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -307,6 +326,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_promotion_plan_json(Path(args.output), plan)
         print(f"wrote promotion plan with {len(plan.dry_run_ops)} dry-run ops to {args.output}")
         return 0
+    if args.command == "promotion-preview":
+        plan_data = _load_required_json_mapping(args.plan, "promotion plan")
+        preview = build_locked_preview(
+            plan_data,
+            lock_scope=_load_json_mapping(args.lock_scope),
+            timestamp=args.timestamp,
+        )
+        write_locked_preview_json(Path(args.output), preview)
+        print(f"wrote locked preview with {len(preview.preview_writes)} preview writes to {args.output}")
+        return 0
+    if args.command == "promotion-execute":
+        preview_data = _load_required_json_mapping(args.preview, "locked preview")
+        receipt = build_execution_receipt(
+            preview_data,
+            execution_approval=_load_json_mapping(args.execution_approval),
+            timestamp=args.timestamp,
+        )
+        write_execution_receipt_json(Path(args.output), receipt)
+        print(f"wrote execution receipt with {len(receipt.executed_ops)} local receipt ops to {args.output}")
+        return 0
+    if args.command == "cortex-rollout":
+        rollout = build_cortex_rollout(timestamp=args.timestamp)
+        write_cortex_rollout_json(Path(args.output), rollout)
+        print(f"wrote cortex rollout plan for {len(rollout.sisters)} sisters to {args.output}")
+        return 0
     parser.error("unsupported command")
     return 2
 
@@ -334,9 +378,13 @@ def _load_json_list(path: str | None) -> list[dict[str, object]]:
 def _load_json_mapping(path: str | None) -> dict[str, object] | None:
     if path is None:
         return None
+    return _load_required_json_mapping(path, "JSON object")
+
+
+def _load_required_json_mapping(path: str, label: str) -> dict[str, object]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError("expected JSON object")
+        raise ValueError(f"expected {label} JSON object")
     return data
 
 
