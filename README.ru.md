@@ -332,8 +332,11 @@ PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli local-api-bundle \
   --artifact-dir /home/chthonya/.local/share/cybrocamp/cortex/current \
   --output-dir data/local-api-bundle \
   --host 127.0.0.1 \
-  --port 8765
+  --port 8765 \
+  --auth-token-file /home/chthonya/.local/share/cybrocamp/secrets/cortex-api-bearer.token
 ```
+
+`--auth-token-file` опционален для строго локального режима. Перед публикацией loopback service через zrok или любой другой overlay он обязателен. Generated bundle хранит только путь к token file, но не значение token; держать этот файл нужно вне canonical vault с ограниченными permissions.
 
 Generated files:
 

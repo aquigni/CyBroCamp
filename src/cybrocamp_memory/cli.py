@@ -193,11 +193,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     api_bundle_parser.add_argument("--output-dir", required=True)
     api_bundle_parser.add_argument("--host", default="127.0.0.1")
     api_bundle_parser.add_argument("--port", type=int, default=8765)
+    api_bundle_parser.add_argument("--auth-token-file", default=None)
 
     api_server_parser = subparsers.add_parser("local-api")
     api_server_parser.add_argument("--artifact-dir", required=True)
     api_server_parser.add_argument("--host", default="127.0.0.1")
     api_server_parser.add_argument("--port", type=int, default=8765)
+    api_server_parser.add_argument("--auth-token-file", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -425,12 +427,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             artifact_dir=Path(args.artifact_dir),
             host=args.host,
             port=args.port,
+            auth_token_file=args.auth_token_file,
         )
         written = write_api_bundle(Path(args.output_dir), bundle)
         print(f"wrote CyBroCamp local API bundle to {Path(args.output_dir)} ({len(written)} files)")
         return 0
     if args.command == "local-api":
-        run_local_api(artifact_dir=Path(args.artifact_dir), host=args.host, port=args.port)
+        run_local_api(artifact_dir=Path(args.artifact_dir), host=args.host, port=args.port, auth_token_file=args.auth_token_file)
         return 0
     parser.error("unsupported command")
     return 2

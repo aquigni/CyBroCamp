@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -99,13 +100,15 @@ def build_api_bundle(
     host: str = DEFAULT_API_HOST,
     port: int = DEFAULT_API_PORT,
     service_name: str = DEFAULT_API_SERVICE_NAME,
+    auth_token_file: str | Path | None = None,
 ) -> dict[str, Any]:
     _validate_loopback_host(host)
     _validate_port(port)
     repo = Path(repo_root).expanduser().resolve(strict=False)
     artifacts = _validated_artifact_dir(artifact_dir)
-    runner = _runner_script(repo, artifacts, host, port)
-    service = _systemd_service(service_name, repo, runner_path_placeholder=f"%h/.local/bin/{service_name}.sh")
+    token_path = _validated_auth_token_file(auth_token_file) if auth_token_file is not None else None
+    runner = _runner_script(repo, artifacts, host, port, auth_token_file=token_path)
+    service = _systemd_service(service_name, repo, runner_path_placeholder=f"%h/.local/bin/{service_name}.sh", auth_token_file=token_path)
     return {
         "schema_version": API_BUNDLE_SCHEMA_VERSION,
         "service_name": service_name,
@@ -115,6 +118,7 @@ def build_api_bundle(
             "artifact_dir": str(artifacts),
             "user_bin_runner": f"%h/.local/bin/{service_name}.sh",
             "user_systemd_service": f"%h/.config/systemd/user/{service_name}.service",
+            "auth_token_file": str(token_path) if token_path is not None else None,
         },
         "safety_envelope": {
             "canonical_writes": False,
@@ -123,6 +127,9 @@ def build_api_bundle(
             "writes_inside_vault": False,
             "local_loopback_only": True,
             "user_systemd_only": True,
+            "bearer_auth_supported": True,
+            "bearer_auth_required": token_path is not None,
+            "token_serialized": False,
         },
         "runner_script": runner,
         "systemd_service": service,
@@ -152,10 +159,11 @@ def write_api_bundle(output_dir: str | Path, bundle: Mapping[str, Any]) -> dict[
     return files
 
 
-def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_PORT) -> None:
+def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_PORT, auth_token_file: str | Path | None = None) -> None:
     _validate_loopback_host(host)
     _validate_port(port)
     artifacts = _validated_artifact_dir(artifact_dir)
+    expected_token = load_auth_token(auth_token_file) if auth_token_file is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "CyBroCampLocalAPI/1.0"
@@ -164,11 +172,15 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
             if self.path != "/status":
                 self._send_json({"error": "not_found"}, status=404)
                 return
+            if not self._authorized():
+                return
             self._send_json(build_api_status(artifact_dir=artifacts, timestamp=_utc_now()))
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
             if self.path != "/query":
                 self._send_json({"error": "not_found"}, status=404)
+                return
+            if not self._authorized():
                 return
             try:
                 raw_length = self.headers.get("Content-Length")
@@ -201,8 +213,35 @@ def run_local_api(*, artifact_dir: str | Path, host: str = DEFAULT_API_HOST, por
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self) -> bool:
+            if expected_token is None:
+                return True
+            if require_bearer_auth(self.headers.get("Authorization"), expected_token):
+                return True
+            self._send_json({"error": "unauthorized"}, status=401)
+            return False
+
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
+
+
+def load_auth_token(path: str | Path | None) -> str:
+    if path is None:
+        raise ValueError("auth token path is required")
+    token_path = _validated_auth_token_file(path)
+    token = token_path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise ValueError("auth token file is empty")
+    return token
+
+
+def require_bearer_auth(header: str | None, expected_token: str) -> bool:
+    if not expected_token:
+        return False
+    prefix = "Bearer "
+    if not isinstance(header, str) or not header.startswith(prefix):
+        return False
+    return hmac.compare_digest(header[len(prefix) :], expected_token)
 
 
 def _validated_artifact_dir(path: str | Path) -> Path:
@@ -293,12 +332,28 @@ def _validate_port(port: int) -> None:
         raise ValueError("port must be between 1024 and 65535")
 
 
-def _runner_script(repo: Path, artifacts: Path, host: str, port: int) -> str:
+def _validated_auth_token_file(path: str | Path | None) -> Path:
+    if path is None:
+        raise ValueError("auth token file is empty")
+    candidate = Path(path).expanduser().resolve(strict=False)
+    if _path_contains_canonical_vault(candidate):
+        raise ValueError("auth token file must be outside /opt/obs/vault")
+    if not candidate.exists() or not candidate.is_file():
+        raise ValueError("auth token file is empty or missing")
+    return candidate
+
+
+def _runner_script(repo: Path, artifacts: Path, host: str, port: int, *, auth_token_file: Path | None = None) -> str:
+    auth_line = ""
+    auth_arg = ""
+    if auth_token_file is not None:
+        auth_line = f"AUTH_TOKEN_FILE={_sh_quote(str(auth_token_file))}\n"
+        auth_arg = ' \\\n  --auth-token-file "$AUTH_TOKEN_FILE"'
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 REPO_ROOT={_sh_quote(str(repo))}
 ARTIFACT_DIR={_sh_quote(str(artifacts))}
-PY="$REPO_ROOT/.venv/bin/python"
+{auth_line}PY="$REPO_ROOT/.venv/bin/python"
 if [ ! -x "$PY" ]; then
   PY="python3"
 fi
@@ -306,11 +361,14 @@ cd "$REPO_ROOT"
 exec env PYTHONPATH=src "$PY" -m cybrocamp_memory.cli local-api \
   --artifact-dir "$ARTIFACT_DIR" \
   --host {host} \
-  --port {port}
+  --port {port}{auth_arg}
 '''
 
 
-def _systemd_service(service_name: str, repo: Path, *, runner_path_placeholder: str) -> str:
+def _systemd_service(service_name: str, repo: Path, *, runner_path_placeholder: str, auth_token_file: Path | None = None) -> str:
+    auth_environment = ""
+    if auth_token_file is not None:
+        auth_environment = f"Environment=CYBROCAMP_LOCAL_API_TOKEN_FILE={auth_token_file}\n"
     return f'''[Unit]
 Description=CyBroCamp bounded local cortex query/status API
 Documentation=https://github.com/aquigni/CyBroCamp
@@ -319,7 +377,7 @@ After=default.target
 [Service]
 Type=simple
 WorkingDirectory={repo}
-ExecStart={runner_path_placeholder}
+{auth_environment}ExecStart={runner_path_placeholder}
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true

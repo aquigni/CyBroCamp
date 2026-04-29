@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -10,6 +17,8 @@ from cybrocamp_memory.local_api import (
     build_api_bundle,
     build_api_status,
     build_query_response,
+    load_auth_token,
+    require_bearer_auth,
     run_local_api,
     validate_query_payload,
     write_api_bundle,
@@ -192,3 +201,130 @@ def test_run_local_api_rejects_non_loopback_and_invalid_port_before_binding(tmp_
         run_local_api(artifact_dir=artifact_dir, host="0.0.0.0", port=8765)
     with pytest.raises(ValueError, match="port"):
         run_local_api(artifact_dir=artifact_dir, host="127.0.0.1", port=0)
+
+
+def test_bearer_auth_helpers_are_fail_closed_and_non_leaky(tmp_path):
+    token_file = tmp_path / "cybrocamp-token"
+    token_file.write_text("sister-token-value\n", encoding="utf-8")
+
+    token = load_auth_token(token_file)
+
+    assert require_bearer_auth("Bearer sister-token-value", token) is True
+    assert require_bearer_auth(None, token) is False
+    assert require_bearer_auth("Bearer wrong", token) is False
+    with pytest.raises(ValueError, match="empty"):
+        load_auth_token(tmp_path / "missing")
+
+
+def test_api_bundle_can_reference_external_auth_token_file_without_serializing_token(tmp_path):
+    artifact_dir = _runtime_artifact_dir(tmp_path)
+    token_file = tmp_path / "cybrocamp-token"
+    token_file.write_text("sister-token-value\n", encoding="utf-8")
+
+    bundle = build_api_bundle(
+        repo_root=tmp_path / "repo",
+        artifact_dir=artifact_dir,
+        auth_token_file=token_file,
+    )
+    raw = json.dumps(bundle, ensure_ascii=False, sort_keys=True)
+
+    assert "sister-token-value" not in raw
+    assert "CYBROCAMP_LOCAL_API_TOKEN_FILE" in bundle["systemd_service"]
+    assert bundle["safety_envelope"]["bearer_auth_supported"] is True
+    assert bundle["safety_envelope"]["token_serialized"] is False
+
+
+def test_live_local_api_enforces_bearer_auth_when_configured(tmp_path):
+    artifact_dir = _runtime_artifact_dir(tmp_path)
+    token_file = tmp_path / "cybrocamp-token"
+    auth_value = "sister-token-value"
+    token_file.write_text(f"{auth_value}\n", encoding="utf-8")
+    port = _free_port()
+    proc = _start_local_api_process(artifact_dir=artifact_dir, port=port, auth_token_file=token_file)
+    try:
+        assert _status_code(f"http://127.0.0.1:{port}/status") == 401
+        assert _status_code(f"http://127.0.0.1:{port}/status", auth_header_value="wrong") == 401
+        assert _status_code(f"http://127.0.0.1:{port}/status", auth_header_value=auth_value) == 200
+        assert _status_code(
+            f"http://127.0.0.1:{port}/query",
+            auth_header_value=auth_value,
+            body=json.dumps({"query": "stage13 hermes adapter eval", "top_k": 1}).encode("utf-8"),
+        ) == 200
+    finally:
+        _stop_process(proc)
+
+
+def test_live_local_api_preserves_unauthenticated_local_mode(tmp_path):
+    artifact_dir = _runtime_artifact_dir(tmp_path)
+    port = _free_port()
+    proc = _start_local_api_process(artifact_dir=artifact_dir, port=port)
+    try:
+        assert _status_code(f"http://127.0.0.1:{port}/status") == 200
+    finally:
+        _stop_process(proc)
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _start_local_api_process(*, artifact_dir: Path, port: int, auth_token_file: Path | None = None) -> subprocess.Popen[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "cybrocamp_memory.cli",
+        "local-api",
+        "--artifact-dir",
+        str(artifact_dir),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    if auth_token_file is not None:
+        command.extend(["--auth-token-file", str(auth_token_file)])
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = "src" if not existing_pythonpath else f"src{os.pathsep}{existing_pythonpath}"
+    proc = subprocess.Popen(command, cwd=Path(__file__).parents[1], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=1)
+            raise AssertionError(f"local api exited early: stdout={stdout!r} stderr={stderr!r}")
+        try:
+            _status_code(f"http://127.0.0.1:{port}/status")
+            return proc
+        except OSError:
+            time.sleep(0.05)
+        except HTTPError as exc:
+            if exc.code == 401:
+                return proc
+            raise
+    _stop_process(proc)
+    raise AssertionError("local api did not become ready")
+
+
+def _status_code(url: str, *, auth_header_value: str | None = None, body: bytes | None = None) -> int:
+    headers = {"Content-Type": "application/json"}
+    if auth_header_value is not None:
+        headers["Authorization"] = f"Bearer {auth_header_value}"
+    request = Request(url, data=body, headers=headers, method="POST" if body is not None else "GET")
+    try:
+        with urlopen(request, timeout=3) as response:
+            return int(response.status)
+    except HTTPError as exc:
+        return int(exc.code)
+
+
+def _stop_process(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
