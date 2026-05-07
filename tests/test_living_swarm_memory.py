@@ -128,6 +128,76 @@ def test_living_memory_packet_normalizes_service_identity_kind_variants():
     assert promotion["executable"] is False
 
 
+def test_h0st_approved_bounded_identity_and_service_promotions_require_safety_fields():
+    packet = build_living_memory_packet(
+        night="2026-05-08",
+        promotion_candidates=[
+            {
+                "kind": "mac0sh_identity_alias_normalization",
+                "subject": "mac0sh identity alias",
+                "action": "normalize_alias",
+                "h0st_approved": True,
+                "architecture_review": "pass",
+                "rollback": "restore previous alias mapping",
+                "notify_h0st": True,
+            },
+            {
+                "kind": "cybrocamp_service_mutation",
+                "subject": "cybrocamp internal service",
+                "action": "update_repo_managed_service_contract",
+                "h0st_approved": True,
+                "architecture_review": "pass",
+                "rollback": "revert repo commit",
+                "repo_commit_required": True,
+            },
+            {
+                "kind": "service_identity",
+                "subject": "identity without notification",
+                "action": "promote",
+                "h0st_approved": True,
+                "architecture_review": "pass",
+                "rollback": "revert promotion",
+            },
+        ],
+    ).to_json_dict()
+
+    alias, service, missing_notice = packet["promotion_queue"]
+    assert alias["gate"] == "h0st_approved_bounded"
+    assert alias["executable"] is True
+    assert alias["notify_h0st_required"] is True
+    assert service["gate"] == "h0st_approved_bounded"
+    assert service["repo_commit_required"] is True
+    assert service["executable"] is True
+    assert missing_notice["gate"] == "human_required"
+    assert missing_notice["executable"] is False
+
+
+def test_h0st_approved_bounded_promotions_fail_closed_without_architecture_review_or_rollback():
+    packet = build_living_memory_packet(
+        night="2026-05-08",
+        promotion_candidates=[
+            {
+                "kind": "mempalace_mutation",
+                "subject": "dedupe drawer",
+                "action": "delete_duplicate",
+                "h0st_approved": True,
+                "rollback": "restore drawer from backup",
+            },
+            {
+                "kind": "approval_boundary",
+                "subject": "boundary",
+                "action": "promote",
+                "h0st_approved": True,
+                "architecture_review": "pass",
+            },
+        ],
+    ).to_json_dict()
+
+    for promotion in packet["promotion_queue"]:
+        assert promotion["gate"] == "human_required"
+        assert promotion["executable"] is False
+
+
 def test_living_memory_packet_writer_rejects_canonical_vault_output(tmp_path):
     packet = build_living_memory_packet(night="2026-05-08")
 

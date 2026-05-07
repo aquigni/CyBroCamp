@@ -27,6 +27,35 @@ _LOW_RISK_HYGIENE_PROMOTION_KINDS = {
     "procedural_skill_hygiene",
 }
 
+_H0ST_APPROVED_BOUNDED_PROMOTION_KINDS = {
+    "mac0sh_identity_alias_normalization",
+    "mempalace_mutation",
+    "kg_mutation",
+    "cybrocamp_api_mutation",
+    "cybrocamp_zrok_mutation",
+    "cybrocamp_auth_mutation",
+    "cybrocamp_network_mutation",
+    "cybrocamp_service_mutation",
+    "service_identity",
+    "identity",
+    "permission",
+    "approval_boundary",
+}
+
+_IDENTITY_RELATED_PROMOTION_KINDS = {
+    "mac0sh_identity_alias_normalization",
+    "service_identity",
+    "identity",
+}
+
+_CYBROCAMP_REPO_MUTATION_KINDS = {
+    "cybrocamp_api_mutation",
+    "cybrocamp_zrok_mutation",
+    "cybrocamp_auth_mutation",
+    "cybrocamp_network_mutation",
+    "cybrocamp_service_mutation",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class LivingSwarmMemoryPacket:
@@ -181,18 +210,44 @@ def _build_promotion_queue(candidates: Sequence[Mapping[str, Any]], redaction_co
         safe = _sanitize_value(dict(item), redaction_counts)
         kind = _normalize_kind(safe.get("kind", "unknown")) if isinstance(safe, Mapping) else "unknown"
         low_risk_hygiene = kind in _LOW_RISK_HYGIENE_PROMOTION_KINDS
-        queue.append(
-            {
-                "kind": kind,
-                "subject": safe.get("subject", "unknown") if isinstance(safe, Mapping) else "unknown",
-                "action": safe.get("action", "propose") if isinstance(safe, Mapping) else "propose",
-                "gate": "sister_reviewed_low_risk" if low_risk_hygiene else "human_required",
-                "executable": low_risk_hygiene,
-                "authority_class": "proposal_not_command",
-                "review_policy": "sister co-review may recommend; execution requires the listed gate",
-            }
-        )
+        h0st_bounded = _is_h0st_approved_bounded_promotion(kind, safe)
+        gate = "human_required"
+        executable = False
+        if low_risk_hygiene:
+            gate = "sister_reviewed_low_risk"
+            executable = True
+        elif h0st_bounded:
+            gate = "h0st_approved_bounded"
+            executable = True
+        entry = {
+            "kind": kind,
+            "subject": safe.get("subject", "unknown") if isinstance(safe, Mapping) else "unknown",
+            "action": safe.get("action", "propose") if isinstance(safe, Mapping) else "propose",
+            "gate": gate,
+            "executable": executable,
+            "authority_class": "proposal_not_command",
+            "review_policy": "sister co-review may recommend; execution requires the listed gate",
+        }
+        if kind in _IDENTITY_RELATED_PROMOTION_KINDS:
+            entry["notify_h0st_required"] = True
+        if kind in _CYBROCAMP_REPO_MUTATION_KINDS:
+            entry["repo_commit_required"] = True
+        queue.append(entry)
     return queue
+
+
+def _is_h0st_approved_bounded_promotion(kind: str, safe: object) -> bool:
+    if kind not in _H0ST_APPROVED_BOUNDED_PROMOTION_KINDS or not isinstance(safe, Mapping):
+        return False
+    if safe.get("h0st_approved") is not True:
+        return False
+    if _normalize_kind(safe.get("architecture_review", "")) not in {"pass", "passed", "ok", "approve", "approved"}:
+        return False
+    if not str(safe.get("rollback", "")).strip():
+        return False
+    if kind in _IDENTITY_RELATED_PROMOTION_KINDS and safe.get("notify_h0st") is not True:
+        return False
+    return True
 
 
 def _sanitize_value(value: object, redaction_counts: dict[str, int]) -> object:
