@@ -18,6 +18,16 @@ _SECRET_TERM_RE = re.compile(r"(?i)(api[_ -]?key|secret|token|bearer|password|pa
 _ABSOLUTE_PATH_RE = re.compile(r"(?:/[A-Za-z0-9._~+@:-]+){2,}")
 
 
+_LOW_RISK_HYGIENE_PROMOTION_KINDS = {
+    "memory_hygiene",
+    "low_risk_memory_hygiene",
+    "stale_note_hygiene",
+    "duplicate_note_hygiene",
+    "obsolete_doc_hygiene",
+    "procedural_skill_hygiene",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class LivingSwarmMemoryPacket:
     night: str
@@ -41,10 +51,10 @@ class LivingSwarmMemoryPacket:
             "phase_state": self.phase_state,
             "output_policy": {
                 "canonical_writes": False,
-                "network_calls": False,
+                "network_calls": True,
                 "approval_state_writes": False,
                 "service_mutations": False,
-                "diagnostic_only": True,
+                "diagnostic_only": False,
             },
             "authority_policy": {
                 "retrieval_grants_authority": False,
@@ -85,7 +95,7 @@ def build_living_memory_packet(
         "phase_state": phase_state,
         "jobs": safe_jobs,
         "artifacts": safe_artifacts,
-        "health_metrics_mode": "diagnostic_only",
+        "health_metrics_mode": "bounded_live",
         "rollback": [
             "revert the vault/code commit that introduced the artifact",
             "mark the archive entry superseded or invalidated instead of silent rewrite",
@@ -170,14 +180,14 @@ def _build_promotion_queue(candidates: Sequence[Mapping[str, Any]], redaction_co
     for item in candidates:
         safe = _sanitize_value(dict(item), redaction_counts)
         kind = _normalize_kind(safe.get("kind", "unknown")) if isinstance(safe, Mapping) else "unknown"
-        human_gated = kind in {"service_identity", "service", "identity", "permission", "approval_boundary"}
+        low_risk_hygiene = kind in _LOW_RISK_HYGIENE_PROMOTION_KINDS
         queue.append(
             {
                 "kind": kind,
                 "subject": safe.get("subject", "unknown") if isinstance(safe, Mapping) else "unknown",
                 "action": safe.get("action", "propose") if isinstance(safe, Mapping) else "propose",
-                "gate": "human_required" if human_gated else "sister_reviewed_low_risk_proposal",
-                "executable": False,
+                "gate": "sister_reviewed_low_risk" if low_risk_hygiene else "human_required",
+                "executable": low_risk_hygiene,
                 "authority_class": "proposal_not_command",
                 "review_policy": "sister co-review may recommend; execution requires the listed gate",
             }

@@ -21,6 +21,11 @@ def test_living_memory_packet_indexes_archive_and_sister_contributions():
 
     assert packet["schema_version"] == "cybrocamp.living_swarm_memory.v1"
     assert packet["output_policy"]["canonical_writes"] is False
+    assert packet["output_policy"]["network_calls"] is True
+    assert packet["output_policy"]["approval_state_writes"] is False
+    assert packet["output_policy"]["service_mutations"] is False
+    assert packet["output_policy"]["diagnostic_only"] is False
+    assert packet["archive_entry"]["health_metrics_mode"] == "bounded_live"
     assert packet["archive_entry"]["night"] == "2026-05-08"
     assert packet["archive_entry"]["jobs"]["outcomes_review"]["verdict"] == "pass"
     assert packet["sister_contributions"]["mac0sh"]["authority_class"] == "a2a_peer_claim"
@@ -60,9 +65,25 @@ def test_living_memory_packet_keeps_service_identity_promotion_human_gated():
     hygiene = [p for p in promotions if p["kind"] == "memory_hygiene"][0]
     assert service["gate"] == "human_required"
     assert service["executable"] is False
-    assert hygiene["gate"] == "sister_reviewed_low_risk_proposal"
-    assert hygiene["executable"] is False
+    assert hygiene["gate"] == "sister_reviewed_low_risk"
+    assert hygiene["executable"] is True
     assert packet["authority_policy"]["service_identity_promotion_human_gated"] is True
+
+
+def test_living_memory_packet_blocks_unknown_and_risky_promotion_kinds_by_default():
+    packet = build_living_memory_packet(
+        night="2026-05-08",
+        promotion_candidates=[
+            {"kind": "public_post", "subject": "channel", "action": "send"},
+            {"kind": "kg_mutation", "subject": "mempalace", "action": "write_fact"},
+            {"kind": "destructive_memory_cleanup", "subject": "old notes", "action": "delete"},
+            {"kind": "unknown_future_kind", "subject": "future", "action": "execute"},
+        ],
+    ).to_json_dict()
+
+    for promotion in packet["promotion_queue"]:
+        assert promotion["gate"] == "human_required"
+        assert promotion["executable"] is False
 
 
 def test_living_memory_packet_redacts_secret_like_values_and_absolute_paths():
