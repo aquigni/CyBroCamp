@@ -12,6 +12,7 @@ from .cortex_automation import (
     build_dream_archive_index,
     build_dream_context_bundle,
     build_event_ledger,
+    build_incremental_cortex_pulse,
     build_nightly_cortex_eval,
     build_query_router_response,
     write_json_atomic,
@@ -242,6 +243,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     cortex_eval_parser.add_argument("--dream-archive-index", default=None)
     cortex_eval_parser.add_argument("--expected-archive-entry", action="append", default=[])
     cortex_eval_parser.add_argument("--output", required=True)
+
+    cortex_pulse_parser = subparsers.add_parser("cortex-pulse")
+    cortex_pulse_parser.add_argument("--timestamp", required=True)
+    cortex_pulse_parser.add_argument("--vault-epoch", default=None)
+    cortex_pulse_parser.add_argument("--previous-state", default=None)
+    cortex_pulse_parser.add_argument("--event-ledger", default=None)
+    cortex_pulse_parser.add_argument("--dream-context", default=None)
+    cortex_pulse_parser.add_argument("--router-response", action="append", default=[])
+    cortex_pulse_parser.add_argument("--output", required=True)
 
     archive_index_parser = subparsers.add_parser("dream-archive-index")
     archive_index_parser.add_argument("--dream-dir", required=True)
@@ -533,6 +543,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_json_atomic(args.output, report)
         print(f"wrote nightly cortex eval report with {report['case_count']} cases to {args.output}")
         return 0 if report["passed"] else 1
+    if args.command == "cortex-pulse":
+        pulse = build_incremental_cortex_pulse(
+            timestamp=args.timestamp,
+            vault_epoch=args.vault_epoch,
+            previous_state=_load_json_mapping(args.previous_state),
+            event_ledger=_load_json_mapping(args.event_ledger),
+            dream_context_bundle=_load_json_mapping(args.dream_context),
+            router_responses=[_load_required_json_mapping(path, "query router response") for path in args.router_response],
+        )
+        write_json_atomic(args.output, pulse)
+        print(f"wrote incremental cortex pulse to {args.output}")
+        return 0
     if args.command == "dream-archive-index":
         readme_path = Path(args.readme)
         existing = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""

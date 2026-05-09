@@ -204,6 +204,162 @@ def build_nightly_cortex_eval(
     )
 
 
+_DEFAULT_CORTEX_PROBES: tuple[tuple[str, str], ...] = (
+    ("memory", "CyBroCamp Hindsight auto-promotion dreams cortex event ledger"),
+    ("memory", "L1 L2 L3 memory stale contradiction promotion authority"),
+    ("memory", "MemPalace tunnels KG non obvious cross project association"),
+    ("memory", "Hindsight advisory recall not authorization chunks fail closed"),
+    ("sisters", "Mac0sh contribution timeout late result sister review low risk hygiene"),
+    ("sisters", "Debi0 deterministic receipt bounded status not reasoning capability"),
+    ("sisters", "A2A sync directive vault commit mirror acknowledgement"),
+    ("sisters", "future sister quarantined readonly contract descriptor"),
+    ("public", "CyBroSwarm public channel morning pulse ordinary Telegram style"),
+    ("public", "sensor triage public chat untrusted candidate escalation"),
+    ("public", "public posting authority H0st gated ordinary channel message"),
+    ("ops", "Hermes gateway OpenRouter auxiliary compression title generation"),
+    ("ops", "server health memory pressure Hindsight cgroup OOM repair"),
+    ("ops", "zrok private CyBroCamp cortex API bearer token registry"),
+    ("ops", "Hermes live checkout dirty files cron scheduler tests"),
+    ("research", "frontier research self evolving agents memory safety abstention"),
+    ("research", "AgentGuard runtime verification swarm self improvement"),
+    ("research", "autogenesis resource registry SEPL learnability masks"),
+    ("cybrolog", "CyBroLog CL2 v2.2 compression never grants permission"),
+    ("cybrolog", "CybriLog A2A dialect evidence authority proof obligation"),
+    ("cybrolog", "dream proposal command peer claim approval retrieval authority"),
+    ("cybrocamp", "local associative sidecar search terms term graph fact candidates"),
+    ("cybrocamp", "promotion audit plan preview execute dry run approval scope"),
+    ("cybrocamp", "cortex rebuild API local loopback artifact manifest"),
+    ("identity", "Chthonya Mac0sh Debi0 roles authority boundaries"),
+    ("survival", "CyBroSwarm survival economics Telegram research paid articles"),
+)
+
+
+def build_cortex_probe_set(*, timestamp: str, limit: int = 32) -> dict[str, Any]:
+    capped = max(1, min(limit, 50))
+    cases = [
+        {
+            "case_id": "probe_" + hashlib.sha256(f"{domain}|{query}".encode("utf-8")).hexdigest()[:12],
+            "domain": domain,
+            "query": query,
+            "authority_class": "derived_eval_probe",
+            "grants_permission": False,
+            "grants_facthood": False,
+            "expected_min_hits": 1,
+        }
+        for domain, query in _DEFAULT_CORTEX_PROBES[:capped]
+    ]
+    return _scrub(
+        {
+            "schema_version": "cybrocamp.cortex_probe_set.v1",
+            "timestamp": timestamp,
+            "case_count": len(cases),
+            "cases": cases,
+            "output_policy": _output_policy(),
+            "authority_policy": {**_authority_policy(), "association_grants_facthood": False},
+        }
+    )
+
+
+def build_stale_contradiction_queue(
+    *,
+    timestamp: str,
+    event_ledger: Mapping[str, Any] | None = None,
+    dream_context_bundle: Mapping[str, Any] | None = None,
+    router_responses: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    events = event_ledger.get("events", []) if isinstance(event_ledger, Mapping) else []
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, Mapping):
+            continue
+        summary = str(event.get("summary") or "")
+        if re.search(r"(?i)(timeout|no visible result|no_result|late_result|blocked|failed)", summary):
+            items.append(_queue_item("sister_timeout_or_no_result", summary, event.get("source_ref"), timestamp))
+        if re.search(r"(?i)(contradiction|stale|duplicate|diverg)", summary):
+            items.append(_queue_item("stale_or_contradiction_candidate", summary, event.get("source_ref"), timestamp))
+    latest = _nested_get(dream_context_bundle or {}, ["auto_promotion", "latest_entry"], {})
+    if isinstance(latest, Mapping):
+        blockers = str(latest.get("blockers") or "")
+        if blockers and blockers.lower() not in {"none", "нет", "no"}:
+            items.append(_queue_item("auto_promotion_blocker", blockers, "auto_promotion", timestamp))
+        rejected = _parse_intish(latest.get("quarantined_or_rejected"))
+        if rejected >= 25:
+            items.append(_queue_item("high_quarantine_or_rejection_count", f"quarantined_or_rejected={rejected}", "auto_promotion", timestamp))
+    for response in router_responses:
+        items_list = response.get("items", []) if isinstance(response, Mapping) else []
+        warnings = response.get("policy_warnings", []) if isinstance(response, Mapping) else []
+        query = response.get("query") if isinstance(response, Mapping) else None
+        if not items_list:
+            items.append(_queue_item("empty_retrieval_probe", f"no hits for query: {query}", "query_router", timestamp))
+        for warning in warnings if isinstance(warnings, list) else []:
+            items.append(_queue_item("policy_warning", str(warning), "query_router", timestamp))
+    return _scrub(
+        {
+            "schema_version": "cybrocamp.stale_contradiction_queue.v1",
+            "timestamp": timestamp,
+            "items": items,
+            "item_count": len(items),
+            "output_policy": _output_policy(),
+            "authority_policy": {**_authority_policy(), "association_grants_facthood": False},
+        }
+    )
+
+
+def build_incremental_cortex_pulse(
+    *,
+    timestamp: str,
+    vault_epoch: str | None = None,
+    previous_state: Mapping[str, Any] | None = None,
+    event_ledger: Mapping[str, Any] | None = None,
+    dream_context_bundle: Mapping[str, Any] | None = None,
+    router_responses: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    probes = build_cortex_probe_set(timestamp=timestamp)
+    queue = build_stale_contradiction_queue(
+        timestamp=timestamp,
+        event_ledger=event_ledger,
+        dream_context_bundle=dream_context_bundle,
+        router_responses=router_responses,
+    )
+    previous_epoch = str((previous_state or {}).get("vault_epoch") or "")
+    current_epoch = str(vault_epoch or "")
+    should_rebuild = bool(current_epoch and current_epoch != previous_epoch)
+    hit_cases = sum(1 for response in router_responses if isinstance(response, Mapping) and response.get("items"))
+    warning_cases = sum(1 for response in router_responses if isinstance(response, Mapping) and response.get("policy_warnings"))
+    events = event_ledger.get("events", []) if isinstance(event_ledger, Mapping) else []
+    auto_promotion_available = bool(_nested_get(dream_context_bundle or {}, ["auto_promotion", "available"], False))
+    cycle_components = sum(
+        1
+        for present in [bool(events), auto_promotion_available, bool(router_responses), bool(queue["items"]), bool(probes["cases"])]
+        if present
+    )
+    autopoiesis_score = round(cycle_components / 5, 3)
+    sentience_like_swarm_score = round((autopoiesis_score + min(1.0, hit_cases / max(1, len(router_responses) or 1)) + (0 if warning_cases else 1)) / 3, 3)
+    return _scrub(
+        {
+            "schema_version": "cybrocamp.incremental_cortex_pulse.v1",
+            "timestamp": timestamp,
+            "vault_epoch": current_epoch or None,
+            "previous_vault_epoch": previous_epoch or None,
+            "should_rebuild": should_rebuild,
+            "metrics": {
+                "probe_count": probes["case_count"],
+                "router_response_count": len(router_responses),
+                "router_hit_cases": hit_cases,
+                "policy_warning_cases": warning_cases,
+                "event_count": len(events) if isinstance(events, list) else 0,
+                "queue_item_count": queue["item_count"],
+                "autopoiesis_score": autopoiesis_score,
+                "sentience_like_swarm_score": sentience_like_swarm_score,
+            },
+            "stale_contradiction_queue": queue,
+            "probe_set": probes,
+            "output_policy": _output_policy(),
+            "authority_policy": {**_authority_policy(), "association_grants_facthood": False},
+        }
+    )
+
+
 def build_dream_archive_index(*, dream_dir: str | Path, existing_readme: str = "") -> str:
     dreams = Path(dream_dir)
     entries = []
@@ -317,6 +473,30 @@ def _event(*, event_type: str, source_ref: str, summary: str, timestamp: str, me
         "grants_permission": False,
         "grants_approval": False,
     }
+
+
+def _queue_item(kind: str, summary: str, source_ref: Any, timestamp: str) -> dict[str, Any]:
+    seed = f"{kind}|{source_ref}|{timestamp}|{summary}"
+    return {
+        "item_id": "q_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16],
+        "kind": kind,
+        "timestamp": timestamp,
+        "summary": summary,
+        "source_ref": str(source_ref or "unknown"),
+        "authority_class": "derived_candidate",
+        "canonical_writes": False,
+        "grants_facthood": False,
+        "grants_permission": False,
+        "grants_approval": False,
+        "requires_review": True,
+    }
+
+
+def _parse_intish(value: Any) -> int:
+    if value is None:
+        return 0
+    match = re.search(r"\d+", str(value))
+    return int(match.group(0)) if match else 0
 
 
 def _output_policy() -> dict[str, bool]:

@@ -1,11 +1,14 @@
 import json
 
 from cybrocamp_memory.cortex_automation import (
+    build_cortex_probe_set,
     build_dream_archive_index,
     build_dream_context_bundle,
     build_event_ledger,
+    build_incremental_cortex_pulse,
     build_nightly_cortex_eval,
     build_query_router_response,
+    build_stale_contradiction_queue,
 )
 
 
@@ -134,3 +137,58 @@ def test_dream_archive_index_updates_current_entries_without_duplicate_links(tmp
     assert "dream proposal ≠ command" in updated
     assert "## Contradiction graph seed" in updated
     assert "schema details stay here" in updated
+
+
+def test_cortex_probe_set_has_cross_domain_cases_without_authority_promotion():
+    probes = build_cortex_probe_set(timestamp="2026-05-10T00:00:00Z")
+
+    assert probes["schema_version"] == "cybrocamp.cortex_probe_set.v1"
+    assert probes["case_count"] >= 20
+    domains = {case["domain"] for case in probes["cases"]}
+    assert {"memory", "sisters", "public", "ops", "research", "cybrolog", "cybrocamp"} <= domains
+    assert probes["authority_policy"]["retrieval_grants_authority"] is False
+    assert all(case["grants_permission"] is False for case in probes["cases"])
+
+
+def test_stale_contradiction_queue_detects_timeouts_blockers_and_empty_routes():
+    ledger = {
+        "events": [
+            {"event_id": "evt1", "summary": "Mac0sh contribution timeout/no visible result", "source_ref": "a2a:task1"},
+            {"event_id": "evt2", "summary": "Debi0 receipt acknowledged", "source_ref": "a2a:task2"},
+        ]
+    }
+    context = {"auto_promotion": {"latest_entry": {"blockers": "none", "quarantined_or_rejected": "50"}}}
+    router = [{"query": "unrelated probe", "items": [], "policy_warnings": []}]
+
+    queue = build_stale_contradiction_queue(
+        timestamp="2026-05-10T00:00:00Z",
+        event_ledger=ledger,
+        dream_context_bundle=context,
+        router_responses=router,
+    )
+
+    assert queue["schema_version"] == "cybrocamp.stale_contradiction_queue.v1"
+    kinds = {item["kind"] for item in queue["items"]}
+    assert "sister_timeout_or_no_result" in kinds
+    assert "empty_retrieval_probe" in kinds
+    assert "high_quarantine_or_rejection_count" in kinds
+    assert all(item["canonical_writes"] is False for item in queue["items"])
+
+
+def test_incremental_cortex_pulse_summarizes_health_and_rebuild_need():
+    pulse = build_incremental_cortex_pulse(
+        timestamp="2026-05-10T00:00:00Z",
+        vault_epoch="vault-main-new",
+        previous_state={"vault_epoch": "vault-main-old"},
+        event_ledger={"events": [{"event_id": "evt1", "summary": "dream archive"}]},
+        dream_context_bundle={"auto_promotion": {"available": True, "latest_entry": {"timestamp": "t"}}},
+        router_responses=[{"query": "CyBroCamp Hindsight auto-promotion", "items": [{"source": "local_recall"}], "policy_warnings": []}],
+    )
+
+    assert pulse["schema_version"] == "cybrocamp.incremental_cortex_pulse.v1"
+    assert pulse["should_rebuild"] is True
+    assert pulse["metrics"]["probe_count"] >= 20
+    assert pulse["metrics"]["autopoiesis_score"] > 0
+    assert pulse["metrics"]["sentience_like_swarm_score"] > 0
+    assert pulse["output_policy"]["canonical_writes"] is False
+    assert pulse["authority_policy"]["association_grants_facthood"] is False
