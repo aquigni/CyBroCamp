@@ -8,6 +8,15 @@ from pathlib import Path
 from typing import Sequence
 
 from .chunks import chunk_records_from_obsidian, load_chunk_manifest_jsonl, write_chunk_manifest_jsonl
+from .cortex_automation import (
+    build_dream_archive_index,
+    build_dream_context_bundle,
+    build_event_ledger,
+    build_nightly_cortex_eval,
+    build_query_router_response,
+    write_json_atomic,
+    write_text_atomic,
+)
 from .eval_suite import run_eval_suite
 from .fact_cache import load_fact_cache_jsonl
 from .graph_index import (
@@ -202,6 +211,43 @@ def main(argv: Sequence[str] | None = None) -> int:
     api_server_parser.add_argument("--port", type=int, default=8765)
     api_server_parser.add_argument("--auth-token-file", default=None)
     api_server_parser.add_argument("--auth-token-registry", default=None)
+
+    dream_context_parser = subparsers.add_parser("dream-context")
+    dream_context_parser.add_argument("--night", required=True)
+    dream_context_parser.add_argument("--timestamp", required=True)
+    dream_context_parser.add_argument("--auto-promotion-audit", default=None)
+    dream_context_parser.add_argument("--mempalace-deltas", default=None)
+    dream_context_parser.add_argument("--output", required=True)
+
+    event_ledger_parser = subparsers.add_parser("event-ledger")
+    event_ledger_parser.add_argument("--timestamp", required=True)
+    event_ledger_parser.add_argument("--dream-archive", action="append", default=[])
+    event_ledger_parser.add_argument("--auto-promotion-audit", default=None)
+    event_ledger_parser.add_argument("--cron-jobs", default=None)
+    event_ledger_parser.add_argument("--output", required=True)
+
+    query_router_parser = subparsers.add_parser("query-router")
+    query_router_parser.add_argument("--query", required=True)
+    query_router_parser.add_argument("--timestamp", required=True)
+    query_router_parser.add_argument("--local-recall", default=None)
+    query_router_parser.add_argument("--event-ledger", default=None)
+    query_router_parser.add_argument("--dream-context", default=None)
+    query_router_parser.add_argument("--output", required=True)
+    query_router_parser.add_argument("--max-items", type=int, default=12)
+
+    cortex_eval_parser = subparsers.add_parser("nightly-cortex-eval")
+    cortex_eval_parser.add_argument("--night", required=True)
+    cortex_eval_parser.add_argument("--timestamp", required=True)
+    cortex_eval_parser.add_argument("--router-response", action="append", default=[])
+    cortex_eval_parser.add_argument("--dream-archive-index", default=None)
+    cortex_eval_parser.add_argument("--expected-archive-entry", action="append", default=[])
+    cortex_eval_parser.add_argument("--output", required=True)
+
+    archive_index_parser = subparsers.add_parser("dream-archive-index")
+    archive_index_parser.add_argument("--dream-dir", required=True)
+    archive_index_parser.add_argument("--readme", required=True)
+    archive_index_parser.add_argument("--write", action="store_true")
+    archive_index_parser.add_argument("--output", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "manifest" and args.source == "obsidian":
@@ -443,6 +489,57 @@ def main(argv: Sequence[str] | None = None) -> int:
             auth_token_file=args.auth_token_file,
             auth_token_registry=args.auth_token_registry,
         )
+        return 0
+    if args.command == "dream-context":
+        bundle = build_dream_context_bundle(
+            night=args.night,
+            timestamp=args.timestamp,
+            auto_promotion_audit_path=args.auto_promotion_audit,
+            mempalace_deltas_path=args.mempalace_deltas,
+        )
+        write_json_atomic(args.output, bundle)
+        print(f"wrote dream context bundle to {args.output}")
+        return 0
+    if args.command == "event-ledger":
+        ledger = build_event_ledger(
+            timestamp=args.timestamp,
+            dream_archive_paths=args.dream_archive,
+            auto_promotion_audit_path=args.auto_promotion_audit,
+            cron_jobs=_load_json_list(args.cron_jobs),
+        )
+        write_json_atomic(args.output, ledger)
+        print(f"wrote cortex event ledger with {len(ledger['events'])} events to {args.output}")
+        return 0
+    if args.command == "query-router":
+        routed = build_query_router_response(
+            query=args.query,
+            timestamp=args.timestamp,
+            local_recall_response=_load_json_mapping(args.local_recall),
+            event_ledger=_load_json_mapping(args.event_ledger),
+            dream_context_bundle=_load_json_mapping(args.dream_context),
+            max_items=args.max_items,
+        )
+        write_json_atomic(args.output, routed)
+        print(f"wrote query router response with {len(routed['items'])} items to {args.output}")
+        return 0
+    if args.command == "nightly-cortex-eval":
+        report = build_nightly_cortex_eval(
+            night=args.night,
+            timestamp=args.timestamp,
+            router_responses=[_load_required_json_mapping(path, "query router response") for path in args.router_response],
+            dream_archive_index_path=args.dream_archive_index,
+            expected_archive_entries=args.expected_archive_entry,
+        )
+        write_json_atomic(args.output, report)
+        print(f"wrote nightly cortex eval report with {report['case_count']} cases to {args.output}")
+        return 0 if report["passed"] else 1
+    if args.command == "dream-archive-index":
+        readme_path = Path(args.readme)
+        existing = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+        updated = build_dream_archive_index(dream_dir=args.dream_dir, existing_readme=existing)
+        target = Path(args.output) if args.output else readme_path
+        write_text_atomic(target, updated, allow_canonical_vault=args.write)
+        print(f"wrote dream archive index to {target}")
         return 0
     parser.error("unsupported command")
     return 2

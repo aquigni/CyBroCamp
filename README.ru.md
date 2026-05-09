@@ -41,6 +41,7 @@ Sidecar сам не должен становиться canonical authority surf
 17. **Stage 18 cortex rollout** — rollout трёх сестёр и auto-enrollment policy для будущих сестёр с least-privilege rights.
 18. **Operational persistence bundle** — user-systemd timer и безопасный rebuild runner для постоянных derived cortex artifacts вне `/opt/obs/vault`.
 19. **Bounded local query/status API** — loopback-only `GET /status` и `POST /query` поверх persistent artifacts, без canonical mutation и approval promotion.
+20. **Automatic cortex coupling** — dream-context bundles, cortex event ledger, query-router responses, nightly cortex eval reports и automatic dream archive indexing для shared dreaming loop.
 
 ## Установка
 
@@ -61,7 +62,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 Локальный gate на момент публикации:
 
 ```text
-119 passed
+157 passed
 ```
 
 ## Использование
@@ -381,6 +382,49 @@ curl -fsS -X POST http://127.0.0.1:8765/query \
 ```
 
 `GET /status` возвращает наличие artifacts, byte sizes, `sha256:` hashes, run-manifest counts и safety flags. `POST /query` возвращает `cybrocamp.local_api.query_response.v1`, оборачивая `cybrocamp.hermes_tool_response.v1` с `canonical_writes=false`, `network_calls=false`, `local_loopback_only=true` и `requires_human_approval_for_promotion=true`.
+
+### Automatic cortex coupling для shared dreams
+
+Эти команды связывают nightly shared dream loop с Hindsight auto-promotion, MemPalace deltas, event ledger, query routing, health/eval и archive indexing:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli dream-context \
+  --night 2026-05-10 \
+  --timestamp 2026-05-10T03:00:00Z \
+  --auto-promotion-audit /home/chthonya/.hermes/logs/cybrocamp/auto-promotion-audit.md \
+  --mempalace-deltas /home/chthonya/.local/share/cybrocamp/cortex/current/mempalace-deltas-latest.json \
+  --output /home/chthonya/.local/share/cybrocamp/cortex/current/dream-context-latest.json
+
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli event-ledger \
+  --timestamp 2026-05-10T03:00:00Z \
+  --auto-promotion-audit /home/chthonya/.hermes/logs/cybrocamp/auto-promotion-audit.md \
+  --cron-jobs /home/chthonya/.local/share/cybrocamp/cortex/current/cron-jobs-summary.json \
+  --dream-archive /opt/obs/vault/projects/cybroswarm/dreams/2026-05-09-phase2-bounded-consolidation.md \
+  --output /home/chthonya/.local/share/cybrocamp/cortex/current/cortex-event-ledger-latest.json
+
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli query-router \
+  --query "CyBroCamp Hindsight auto-promotion dreams cortex event ledger" \
+  --timestamp 2026-05-10T04:00:00Z \
+  --local-recall /home/chthonya/.local/share/cybrocamp/cortex/current/dream-local-recall-autopromotion.json \
+  --event-ledger /home/chthonya/.local/share/cybrocamp/cortex/current/cortex-event-ledger-latest.json \
+  --dream-context /home/chthonya/.local/share/cybrocamp/cortex/current/dream-context-latest.json \
+  --output /home/chthonya/.local/share/cybrocamp/cortex/current/dream-query-router-autopromotion.json
+
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli nightly-cortex-eval \
+  --night 2026-05-10 \
+  --timestamp 2026-05-10T04:30:00Z \
+  --router-response /home/chthonya/.local/share/cybrocamp/cortex/current/dream-query-router-autopromotion.json \
+  --dream-archive-index /opt/obs/vault/projects/cybroswarm/dreams/README.md \
+  --expected-archive-entry 2026-05-09-phase2-bounded-consolidation \
+  --output /home/chthonya/.local/share/cybrocamp/cortex/current/nightly-cortex-eval-latest.json
+
+PYTHONPATH=src .venv/bin/python -m cybrocamp_memory.cli dream-archive-index \
+  --dream-dir /opt/obs/vault/projects/cybroswarm/dreams \
+  --readme /opt/obs/vault/projects/cybroswarm/dreams/README.md \
+  --write
+```
+
+Это derived cortex surfaces. Они не дают facthood, permission, approval, public-action authority или canonical KG mutation.
 
 ## Authority model
 
